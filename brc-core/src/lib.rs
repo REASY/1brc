@@ -1,11 +1,7 @@
-// #![feature(slice_internals)]
-
 use rustc_hash::FxHashMap;
-use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
-use std::process::id;
+use std::fmt::Display;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::str::FromStr;
-use std::time::Instant;
-use std::{fmt::Display, fs::File, io};
 
 #[derive(Debug)]
 pub struct State {

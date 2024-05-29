@@ -33,7 +33,7 @@ fn improved_impl_v3_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v3(rdr, 0, (bytes.len() as u64) - 1);
+    let r = improved_impl_v3(rdr, 0, (bytes.len() as u64) - 1, true);
     black_box(r);
 }
 

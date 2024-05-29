@@ -1,15 +1,7 @@
-// #![feature(slice_internals)]
-
-use brc_core::{improved_impl_v2, improved_impl_v3, sort_result, State};
+use brc_core::{improved_impl_v3, sort_result, State};
+use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::time::Instant;
-use std::{fmt::Display, fs::File};
-
-fn merge<'a>(a: &mut hashbrown::HashMap<String, State>, b: &Vec<(String, State)>) {
-    for (k, v) in b {
-        a.entry(k.clone()).or_default().merge(v);
-    }
-}
 
 fn main() {
     let instant = Instant::now();
