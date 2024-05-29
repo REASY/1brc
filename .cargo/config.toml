@@ -1,0 +1,8 @@
+[target.release]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.'cfg(windows)']
+rustflags = "-C link-args=/STACK:10000000"
+
+[target.'cfg(target_os = "linux")']
+rustflags = "-C link-args=-Wl,-zstack-size=10000000"
