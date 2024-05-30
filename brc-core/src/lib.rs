@@ -1,3 +1,4 @@
+use memchr::memchr;
 use rustc_hash::FxHashMap;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -462,6 +463,126 @@ pub fn improved_impl_v2<R: Read + Seek>(
     let mut all: Vec<(String, State)> = hs.into_iter().collect();
     sort_result(&mut all);
     all
+}
+
+pub fn improved_impl_v3_dummy<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+) -> Vec<(String, State)> {
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset: usize = start as usize;
+
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut buf = [0_u8; 5 * 1024 * 1024];
+    let mut dummy_result: usize = 0;
+
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
+        }
+        offset += read_bytes;
+
+        // Scan backward to find the first new line (0xA)
+        let mut i: usize = 0;
+        let mut j: usize = read_bytes - 1;
+        while i < read_bytes && buf[j] != 0xA {
+            i += 1;
+            j -= 1;
+            offset -= 1;
+        }
+
+        if i > 0 {
+            let pos = i as i64;
+            rdr.seek(SeekFrom::Current(-pos))
+                .expect("Failed to seek back from current position");
+        }
+
+        let valid_buffer = &buf[0..=j];
+        let n = valid_buffer.len();
+
+        i = 0;
+        let mut start_name = i;
+        while i < n {
+            if valid_buffer[i] == b';' {
+                let mut j: usize = i + 1;
+                while j < n {
+                    if valid_buffer[j] == 0xA {
+                        dummy_result += 1 + start_name;
+                        if j < n - 1 {
+                            start_name = j + 1;
+                        }
+                        break;
+                    }
+                    j += 1;
+                }
+                i = j;
+            }
+            i += 1;
+        }
+    }
+    let mut s = State::default();
+    s.count = dummy_result as u64;
+    vec![("dummy".to_string(), s)]
+}
+
+pub fn improved_impl_v3_dummy_simd_search<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+) -> Vec<(String, State)> {
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset: usize = start as usize;
+
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut buf = [0_u8; 5 * 1024 * 1024];
+    let mut dummy_result: usize = 0;
+
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
+        }
+        offset += read_bytes;
+
+        // Scan backward to find the first new line (0xA)
+        let valid_buffer = &buf[0..read_bytes];
+        let idx = memchr::memrchr(0xa, &valid_buffer).unwrap();
+
+        let i: usize = valid_buffer.len() - 1 - idx;
+        offset -= i;
+        let j: usize = read_bytes - 1 - i;
+        if i > 0 {
+            let pos = i as i64;
+            rdr.seek(SeekFrom::Current(-pos))
+                .expect("Failed to seek back from current position");
+        }
+        assert!(j < read_bytes, "j: {j}, read_bytes: {read_bytes}");
+
+        let valid_buffer = &valid_buffer[0..=j];
+        let mut start_name = 0;
+        for it in memchr::memchr_iter(b';', &valid_buffer) {
+            let inner_buf = &valid_buffer[it..];
+            let idx = memchr::memchr(0xa, &inner_buf).unwrap();
+            start_name = idx + 1;
+
+            dummy_result += 1 + start_name;
+        }
+    }
+    let mut s = State::default();
+    s.count = dummy_result as u64;
+    vec![("dummy".to_string(), s)]
 }
 
 pub fn improved_impl_v3<R: Read + Seek>(

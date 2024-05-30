@@ -1,4 +1,7 @@
-use brc_core::{improved_impl_v3, sort_result, State};
+use brc_core::{
+    improved_impl_v3, improved_impl_v3_dummy, improved_impl_v3_dummy_simd_search, sort_result,
+    State,
+};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
@@ -26,7 +29,7 @@ fn main() {
 
     let xs = if cores <= 1 {
         let rdr = BufReader::with_capacity(10 * 1024 * 1024, File::open(&path).unwrap());
-        vec![improved_impl_v3(rdr, 0, (file_length - 1) as u64, false)]
+        vec![improved_impl_v3_dummy(rdr, 0, (file_length - 1) as u64)]
     } else {
         let chunks = get_chunks(cores, file);
         let threads: Vec<_> = chunks
@@ -42,7 +45,7 @@ fn main() {
                             BUF_READER_CAPACITY,
                             File::open(&path).unwrap(),
                         );
-                        improved_impl_v3(rdr, start, end_inclusive, false)
+                        improved_impl_v3_dummy_simd_search(rdr, start, end_inclusive)
                     })
                     .unwrap()
             })
@@ -76,8 +79,9 @@ fn main() {
     let mut handle = stdout.lock();
     handle.write_all(output.as_bytes()).unwrap();
 
-    let avg_processing_througput = (file_length as f64 / 1024.0f64 / 1024.0f64)
-        / (instant.elapsed().as_millis() as f64 / 1000.0f64);
+    let file_length_mbytes = (file_length as f64 / 1024.0f64 / 1024.0f64);
+    let elapsed_secs = (instant.elapsed().as_millis() as f64 / 1000.0f64);
+    let avg_processing_througput = file_length_mbytes / elapsed_secs;
     println!(
         "Processed in {} ms, avg_processing_througput: {:.4} MBytes/s",
         instant.elapsed().as_millis(),
