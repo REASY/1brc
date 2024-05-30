@@ -2,21 +2,60 @@ use brc_core::{improved_impl_v3, sort_result, State};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::str::FromStr;
+use std::thread;
 use std::time::Instant;
+
+const THREAD_STACK_SIZE: usize = 10 * 1024 * 1024;
+
+const BUF_READER_CAPACITY: usize = 10 * 1024 * 1024;
 
 fn main() {
     let instant = Instant::now();
-    let cores: usize = std::env::var_os("CORES")
-        .map(|c| usize::from_str(c.to_str().unwrap()).unwrap())
-        .unwrap_or(std::thread::available_parallelism().unwrap().into());
+
     let path = std::env::args().skip(1).next().unwrap_or_else(|| {
         "C:/repos/github/REASY/1brc/brc-core/test_resources/sample.txt".to_owned()
     });
-    let chunks = get_chunks(cores, &path);
-    let mut hs: hashbrown::HashMap<String, State> = hashbrown::HashMap::new();
-    for (s, e) in chunks {
+    let cores: usize = std::env::args()
+        .skip(2)
+        .next()
+        .map(|c| usize::from_str(c.as_str()).unwrap())
+        .unwrap_or_else(|| thread::available_parallelism().unwrap().into());
+
+    let file = File::open(&path).unwrap();
+    let file_length = file.metadata().unwrap().len() as usize;
+
+    let xs = if cores <= 1 {
         let rdr = BufReader::with_capacity(10 * 1024 * 1024, File::open(&path).unwrap());
-        let r = improved_impl_v3(rdr, s as u64, e as u64, false);
+        vec![improved_impl_v3(rdr, 0, (file_length - 1) as u64, false)]
+    } else {
+        let chunks = get_chunks(cores, file);
+        let threads: Vec<_> = chunks
+            .iter()
+            .map(|(s, e)| {
+                let start = *s as u64;
+                let end_inclusive = *e as u64;
+                let path = path.clone();
+                thread::Builder::new()
+                    .stack_size(THREAD_STACK_SIZE)
+                    .spawn(move || {
+                        let rdr = BufReader::with_capacity(
+                            BUF_READER_CAPACITY,
+                            File::open(&path).unwrap(),
+                        );
+                        improved_impl_v3(rdr, start, end_inclusive, false)
+                    })
+                    .unwrap()
+            })
+            .collect();
+        let mut r: Vec<Vec<(String, State)>> = Vec::with_capacity(cores);
+        for t in threads {
+            r.push(t.join().unwrap());
+        }
+        r
+    };
+
+    let mut hs: hashbrown::HashMap<String, State> = hashbrown::HashMap::new();
+    for r in xs {
         for (k, s) in r {
             match hs.get_mut(k.as_str()) {
                 None => {
@@ -37,7 +76,13 @@ fn main() {
     let mut handle = stdout.lock();
     handle.write_all(output.as_bytes()).unwrap();
 
-    println!("Elapsed {} ms", instant.elapsed().as_millis());
+    let avg_processing_througput = (file_length as f64 / 1024.0f64 / 1024.0f64)
+        / (instant.elapsed().as_millis() as f64 / 1000.0f64);
+    println!(
+        "Processed in {} ms, avg_processing_througput: {:.4} MBytes/s",
+        instant.elapsed().as_millis(),
+        avg_processing_througput
+    );
 }
 
 fn prepare_output(final_result: &mut Vec<(String, State)>) -> String {
@@ -60,11 +105,9 @@ fn prepare_output(final_result: &mut Vec<(String, State)>) -> String {
     res
 }
 
-fn get_chunks(cores: usize, path: &String) -> Vec<(usize, usize)> {
-    let file = File::open(&path).unwrap();
+fn get_chunks(cores: usize, file: File) -> Vec<(usize, usize)> {
     let file_length = file.metadata().unwrap().len() as usize;
     let mut rdr = BufReader::with_capacity(1024 * 1024, file);
-
     let chunk_size = file_length / cores;
     let mut chunks: Vec<(usize, usize)> = vec![];
     let mut start = 0;
