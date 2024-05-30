@@ -10,7 +10,7 @@ fn naive_impl_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = naive_impl(rdr, 0, (bytes.len() as u64) - 1);
+    let r = naive_impl(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
@@ -18,7 +18,7 @@ fn improved_impl_v1_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v1(rdr, 0, (bytes.len() as u64) - 1);
+    let r = improved_impl_v1(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
@@ -26,7 +26,7 @@ fn improved_impl_v2_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v2(rdr, 0, (bytes.len() as u64) - 1);
+    let r = improved_impl_v2(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
@@ -34,7 +34,7 @@ fn improved_impl_v3_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v3(rdr, 0, (bytes.len() as u64) - 1, true);
+    let r = improved_impl_v3(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
@@ -42,7 +42,7 @@ fn improved_impl_v3_dummy_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v3_dummy(rdr, 0, (bytes.len() as u64) - 1);
+    let r = improved_impl_v3_dummy(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
@@ -50,7 +50,7 @@ fn improved_impl_v3_dummy_simd_search_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v3_dummy_simd_search(rdr, 0, (bytes.len() as u64) - 1);
+    let r = improved_impl_v3_dummy_simd_search(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
