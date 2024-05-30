@@ -63,6 +63,7 @@ pub fn naive_impl<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
+    should_sort: bool,
 ) -> Vec<(String, State)> {
     let mut offset: usize = start as usize;
 
@@ -97,7 +98,9 @@ pub fn naive_impl<R: Read + Seek>(
     }
 
     let mut all: Vec<(String, State)> = hs.into_iter().collect();
-    sort_result(&mut all);
+    if should_sort {
+        sort_result(&mut all);
+    }
     all
 }
 
@@ -386,6 +389,7 @@ pub fn improved_impl_v1<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
+    should_sort: bool,
 ) -> Vec<(String, State)> {
     let mut offset: usize = start as usize;
 
@@ -419,7 +423,9 @@ pub fn improved_impl_v1<R: Read + Seek>(
         s.clear();
     }
     let mut all: Vec<(String, State)> = hs.into_iter().collect();
-    sort_result(&mut all);
+    if should_sort {
+        sort_result(&mut all);
+    }
     all
 }
 
@@ -427,6 +433,7 @@ pub fn improved_impl_v2<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
+    should_sort: bool,
 ) -> Vec<(String, State)> {
     let mut offset: usize = start as usize;
 
@@ -460,7 +467,9 @@ pub fn improved_impl_v2<R: Read + Seek>(
         s.clear();
     }
     let mut all: Vec<(String, State)> = hs.into_iter().collect();
-    sort_result(&mut all);
+    if should_sort {
+        sort_result(&mut all);
+    }
     all
 }
 
@@ -468,6 +477,7 @@ pub fn improved_impl_v3_dummy<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
+    _should_sort: bool,
 ) -> Vec<(String, State)> {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
@@ -535,6 +545,7 @@ pub fn improved_impl_v3_dummy_simd_search<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
+    _should_sort: bool,
 ) -> Vec<(String, State)> {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;

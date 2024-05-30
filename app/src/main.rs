@@ -1,6 +1,6 @@
 use brc_core::{
-    improved_impl_v3_dummy, improved_impl_v3_dummy_simd_search, sort_result,
-    State,
+    improved_impl_v1, improved_impl_v2, improved_impl_v3, improved_impl_v3_dummy, naive_impl,
+    sort_result, State,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -8,29 +8,47 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Instant;
 
+/// We need large stack size to have faster reading of data. The buffer to read data is allocated in stack!
 const THREAD_STACK_SIZE: usize = 10 * 1024 * 1024;
 
+/// The capacity of BufReader to improve reading
 const BUF_READER_CAPACITY: usize = 10 * 1024 * 1024;
 
 fn main() {
     let instant = Instant::now();
-
-    let path = std::env::args().skip(1).next().unwrap_or_else(|| {
-        "C:/repos/github/REASY/1brc/brc-core/test_resources/sample.txt".to_owned()
-    });
+    let path = std::env::args()
+        .skip(1)
+        .next()
+        .unwrap_or_else(|| "brc-core/test_resources/sample.txt".to_owned());
     let cores: usize = std::env::args()
         .skip(2)
         .next()
         .map(|c| usize::from_str(c.as_str()).unwrap())
         .unwrap_or_else(|| thread::available_parallelism().unwrap().into());
 
+    let method: String = std::env::args()
+        .skip(3)
+        .next()
+        .map(|c| c.clone())
+        .unwrap_or_else(|| "naive_impl".to_string());
+
+    let func = match method.as_str() {
+        "naive_impl" => naive_impl,
+        "improved_impl_v1" => improved_impl_v1,
+        "improved_impl_v2" => improved_impl_v2,
+        "improved_impl_v3_dummy" => improved_impl_v3_dummy,
+        "improved_impl_v3" => improved_impl_v3,
+        x => panic!("{}", x),
+    };
+
     let file = File::open(&path).unwrap();
     let file_length = file.metadata().unwrap().len() as usize;
 
     let xs = if cores <= 1 {
         let rdr = BufReader::with_capacity(10 * 1024 * 1024, File::open(&path).unwrap());
-        vec![improved_impl_v3_dummy(rdr, 0, (file_length - 1) as u64)]
+        vec![func(rdr, 0, (file_length - 1) as u64, true)]
     } else {
+        //
         let chunks = get_chunks(cores, file);
         let threads: Vec<_> = chunks
             .iter()
@@ -45,7 +63,7 @@ fn main() {
                             BUF_READER_CAPACITY,
                             File::open(&path).unwrap(),
                         );
-                        improved_impl_v3_dummy_simd_search(rdr, start, end_inclusive)
+                        func(rdr, start, end_inclusive, false)
                     })
                     .unwrap()
             })
@@ -57,6 +75,7 @@ fn main() {
         r
     };
 
+    // Build the final hashmap by merging all the measurements for the same location
     let mut hs: hashbrown::HashMap<String, State> = hashbrown::HashMap::new();
     for r in xs {
         for (k, s) in r {
@@ -73,19 +92,20 @@ fn main() {
     let mut final_result = hs.into_iter().collect();
     sort_result(&mut final_result);
 
+    // Prepare result and write to console
     let output = prepare_output(&mut final_result);
-
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
     handle.write_all(output.as_bytes()).unwrap();
 
+    // Write some stats
     let file_length_mbytes = file_length as f64 / 1024.0f64 / 1024.0f64;
     let elapsed_secs = instant.elapsed().as_millis() as f64 / 1000.0f64;
-    let avg_processing_througput = file_length_mbytes / elapsed_secs;
-    println!(
-        "Processed in {} ms, avg_processing_througput: {:.4} MBytes/s",
+    let avg_processing_throughput = file_length_mbytes / elapsed_secs;
+    eprintln!(
+        "Processed using `{method}` in {} ms, avg_processing_throughput: {:.4} MBytes/s",
         instant.elapsed().as_millis(),
-        avg_processing_througput
+        avg_processing_throughput
     );
 }
 
@@ -139,6 +159,6 @@ fn get_chunks(cores: usize, file: File) -> Vec<(usize, usize)> {
         chunks.push((start, fixed_end));
         start = fixed_end + 1;
     }
-    println!("For {cores} cores prepared {} chunks, chunk_size: {chunk_size}, file_length: {file_length}", chunks.len());
+    eprintln!("For {cores} cores prepared {} chunks, chunk_size: {chunk_size}, file_length: {file_length}", chunks.len());
     chunks
 }
