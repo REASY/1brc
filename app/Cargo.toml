@@ -8,7 +8,3 @@ edition = "2021"
 [dependencies]
 brc-core = { path = "../brc-core"}
 hashbrown = "0.14.5"
-
-[profile.release]
-lto = "fat"
-codegen-units = 1

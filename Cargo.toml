@@ -5,3 +5,7 @@ members = [
     "brc-core",
     "app",
 ]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

@@ -477,32 +477,31 @@ pub fn improved_impl_v3<R: Read + Seek>(
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut buf = [0_u8; 5 * 1024 * 1024];
+
     while offset <= end_incl_usize {
         let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
         if read_bytes == 0 {
             break;
         }
-        println!("offset: {}, read_bytes: {}", offset, read_bytes);
-
-        if offset + read_bytes > end_incl_usize {
-            let dx = offset + read_bytes - end_incl_usize;
-            read_bytes -= dx;
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
         }
+        offset += read_bytes;
 
+        // Scan backward to find the first new line (0xA)
         let mut i: usize = 0;
         let mut j: usize = read_bytes - 1;
         while i < read_bytes && buf[j] != 0xA {
             i += 1;
             j -= 1;
+            offset -= 1;
         }
 
         if i > 0 {
             let pos = i as i64;
             rdr.seek(SeekFrom::Current(-pos))
                 .expect("Failed to seek back from current position");
-            offset += read_bytes - i;
-
-            println!("i: {}, j: {}", i, j);
         }
 
         let valid_buffer = &buf[0..=j];
@@ -540,7 +539,6 @@ pub fn improved_impl_v3<R: Read + Seek>(
             i += 1;
         }
     }
-
     let mut all: Vec<(String, State)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
