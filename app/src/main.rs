@@ -1,5 +1,5 @@
 use brc_core::{
-    improved_impl_v3, improved_impl_v3_dummy, improved_impl_v3_dummy_simd_search, sort_result,
+    improved_impl_v3_dummy, improved_impl_v3_dummy_simd_search, sort_result,
     State,
 };
 use std::fs::File;
@@ -79,8 +79,8 @@ fn main() {
     let mut handle = stdout.lock();
     handle.write_all(output.as_bytes()).unwrap();
 
-    let file_length_mbytes = (file_length as f64 / 1024.0f64 / 1024.0f64);
-    let elapsed_secs = (instant.elapsed().as_millis() as f64 / 1000.0f64);
+    let file_length_mbytes = file_length as f64 / 1024.0f64 / 1024.0f64;
+    let elapsed_secs = instant.elapsed().as_millis() as f64 / 1000.0f64;
     let avg_processing_througput = file_length_mbytes / elapsed_secs;
     println!(
         "Processed in {} ms, avg_processing_througput: {:.4} MBytes/s",

@@ -1,4 +1,3 @@
-use memchr::memchr;
 use rustc_hash::FxHashMap;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
