@@ -111,7 +111,7 @@ fn main() {
 
 fn prepare_output(final_result: &mut Vec<(String, State)>) -> String {
     let mut res: String = String::new();
-    res.push_str("{{");
+    res.push_str("{");
     for (i, (name, state)) in final_result.iter().enumerate() {
         if i == 0 {
             res.push_str(name.as_str());
@@ -124,7 +124,7 @@ fn prepare_output(final_result: &mut Vec<(String, State)>) -> String {
             res.push_str(&state.to_string());
         }
     }
-    res.push_str("}}");
+    res.push_str("}");
     res.push_str("\n");
     res
 }
