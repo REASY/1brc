@@ -1,17 +1,18 @@
+use hashbrown::HashMap;
 use rustc_hash::FxHashMap;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::str::FromStr;
 
 #[derive(Debug)]
-pub struct State {
+pub struct StateF64 {
     min: f64,
     max: f64,
     count: u64,
     sum: f64,
 }
 
-impl Default for State {
+impl Default for StateF64 {
     fn default() -> Self {
         Self {
             min: f64::MAX,
@@ -22,14 +23,14 @@ impl Default for State {
     }
 }
 
-impl Display for State {
+impl Display for StateF64 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let avg = self.sum / (self.count as f64);
         write!(f, "{:.1}/{avg:.1}/{:.1}", self.min, self.max)
     }
 }
 
-impl State {
+impl StateF64 {
     fn update(&mut self, v: f64) {
         self.min = self.min.min(v);
         self.max = self.max.max(v);
@@ -45,7 +46,66 @@ impl State {
     }
 }
 
-pub fn sort_result(all: &mut Vec<(String, State)>) {
+#[derive(Debug)]
+pub struct StateI64 {
+    min: i64,
+    max: i64,
+    count: u64,
+    sum: i64,
+}
+
+impl Default for StateI64 {
+    fn default() -> Self {
+        Self {
+            min: i64::MAX,
+            max: i64::MIN,
+            count: 0,
+            sum: 0,
+        }
+    }
+}
+
+impl Display for StateI64 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let avg = self.sum as f64 / 10.0f64 / (self.count as f64);
+        write!(f, "{:.1}/{avg:.1}/{:.1}", self.min, self.max)
+    }
+}
+
+impl StateI64 {
+    fn new(v: i64) -> StateI64 {
+        StateI64 {
+            min: v,
+            max: v,
+            count: 1,
+            sum: v,
+        }
+    }
+    fn update(&mut self, v: i64) {
+        self.min = self.min.min(v);
+        self.max = self.max.max(v);
+        self.count += 1;
+        self.sum += v;
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+        self.count += other.count;
+        self.sum += other.sum;
+    }
+
+    pub fn to_f64(&self) -> StateF64 {
+        StateF64 {
+            min: self.min as f64 / 10.0f64,
+            max: self.max as f64 / 10.0f64,
+            count: self.count,
+            sum: self.sum as f64 / 10.0f64,
+        }
+    }
+}
+
+pub fn sort_result(all: &mut Vec<(String, StateF64)>) {
     all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 }
 
@@ -64,7 +124,7 @@ pub fn naive_impl<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, State)> {
+) -> Vec<(String, StateF64)> {
     let mut offset: usize = start as usize;
 
     let mut hs = std::collections::HashMap::new();
@@ -87,7 +147,7 @@ pub fn naive_impl<R: Read + Seek>(
         let value = parse_f64(measurement);
         match hs.get_mut(station_name) {
             None => {
-                let mut s = State::default();
+                let mut s = StateF64::default();
                 s.update(value);
                 hs.insert(station_name.to_string(), s);
             }
@@ -97,7 +157,7 @@ pub fn naive_impl<R: Read + Seek>(
         s.clear();
     }
 
-    let mut all: Vec<(String, State)> = hs.into_iter().collect();
+    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
     }
@@ -329,6 +389,23 @@ const fn get_digit(b: u8) -> u32 {
 }
 
 #[inline]
+pub fn get_as_decimal(bytes: &[u8]) -> i64 {
+    let is_negative = bytes[0] == b'-';
+    let as_decimal = match (is_negative, bytes.len()) {
+        (true, 4) => get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
+        (true, 5) => get_digit(bytes[1]) * 100 + get_digit(bytes[2]) * 10 + get_digit(bytes[4]),
+        (false, 3) => get_digit(bytes[0]) * 10 + get_digit(bytes[2]),
+        (false, 4) => get_digit(bytes[0]) * 100 + get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
+        x => panic!("x: {:?}", x),
+    };
+    if is_negative {
+        -(as_decimal as i64)
+    } else {
+        (as_decimal as i64)
+    }
+}
+
+#[inline]
 pub fn custom_parse_f64(s: &str) -> f64 {
     let bytes = s.as_bytes();
     let is_negative = bytes[0] == b'-';
@@ -390,10 +467,10 @@ pub fn improved_impl_v1<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, State)> {
+) -> Vec<(String, StateF64)> {
     let mut offset: usize = start as usize;
 
-    let mut hs: FxHashMap<String, State> = FxHashMap::default();
+    let mut hs: FxHashMap<String, StateF64> = FxHashMap::default();
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut s: String = String::new();
@@ -413,7 +490,7 @@ pub fn improved_impl_v1<R: Read + Seek>(
         let value = custom_parse_f64(measurement);
         match hs.get_mut(station_name) {
             None => {
-                let mut s = State::default();
+                let mut s = StateF64::default();
                 s.update(value);
                 hs.insert(station_name.to_string(), s);
             }
@@ -422,7 +499,7 @@ pub fn improved_impl_v1<R: Read + Seek>(
 
         s.clear();
     }
-    let mut all: Vec<(String, State)> = hs.into_iter().collect();
+    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
     }
@@ -434,7 +511,7 @@ pub fn improved_impl_v2<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, State)> {
+) -> Vec<(String, StateF64)> {
     let mut offset: usize = start as usize;
 
     let mut hs = hashbrown::HashMap::new();
@@ -457,7 +534,7 @@ pub fn improved_impl_v2<R: Read + Seek>(
         let value = custom_parse_f64(measurement);
         match hs.get_mut(station_name) {
             None => {
-                let mut s = State::default();
+                let mut s = StateF64::default();
                 s.update(value);
                 hs.insert(station_name.to_string(), s);
             }
@@ -466,7 +543,7 @@ pub fn improved_impl_v2<R: Read + Seek>(
 
         s.clear();
     }
-    let mut all: Vec<(String, State)> = hs.into_iter().collect();
+    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
     }
@@ -478,7 +555,7 @@ pub fn improved_impl_v3_dummy<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     _should_sort: bool,
-) -> Vec<(String, State)> {
+) -> Vec<(String, StateF64)> {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
@@ -536,7 +613,7 @@ pub fn improved_impl_v3_dummy<R: Read + Seek>(
             i += 1;
         }
     }
-    let mut s = State::default();
+    let mut s = StateF64::default();
     s.count = dummy_result as u64;
     vec![("dummy".to_string(), s)]
 }
@@ -546,7 +623,7 @@ pub fn improved_impl_v3_dummy_simd_search<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     _should_sort: bool,
-) -> Vec<(String, State)> {
+) -> Vec<(String, StateF64)> {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
@@ -590,7 +667,7 @@ pub fn improved_impl_v3_dummy_simd_search<R: Read + Seek>(
             dummy_result += 1 + start_name;
         }
     }
-    let mut s = State::default();
+    let mut s = StateF64::default();
     s.count = dummy_result as u64;
     vec![("dummy".to_string(), s)]
 }
@@ -600,11 +677,11 @@ pub fn improved_impl_v3<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, State)> {
+) -> Vec<(String, StateF64)> {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
-    let mut hs = hashbrown::HashMap::new();
+    let mut hs = hashbrown::HashMap::with_capacity(1000);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut buf = [0_u8; 5 * 1024 * 1024];
@@ -652,7 +729,7 @@ pub fn improved_impl_v3<R: Read + Seek>(
                         let value = custom_parse_f64(measurement);
                         match hs.get_mut(station_name) {
                             None => {
-                                let mut s = State::default();
+                                let mut s = StateF64::default();
                                 s.update(value);
                                 hs.insert(station_name.to_string(), s);
                             }
@@ -670,7 +747,117 @@ pub fn improved_impl_v3<R: Read + Seek>(
             i += 1;
         }
     }
-    let mut all: Vec<(String, State)> = hs.into_iter().collect();
+    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+/// Credits to @R3M4TCH for helping to fix
+/// https://discord.com/channels/442252698964721669/448238009733742612/1245967276578963498
+struct Holder<'a> {
+    values: &'a mut [u8],
+}
+
+impl<'a> Holder<'a> {
+    fn push(&mut self, bytes: &[u8]) -> &'a [u8] {
+        let values = std::mem::take(&mut self.values);
+        values[..bytes.len()].copy_from_slice(bytes);
+        // the head will be the piece we wrote to
+        let (head, tail) = values.split_at_mut(bytes.len());
+        self.values = tail;
+        head
+    }
+
+    fn new(values: &'static mut [u8]) -> Holder<'a> {
+        Holder { values }
+    }
+}
+
+pub fn improved_impl_v4<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset: usize = start as usize;
+
+    let mut hs: HashMap<&[u8], StateI64> = HashMap::with_capacity(1000);
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut buf = [0_u8; 5 * 1024 * 1024];
+    let idx: usize = 0;
+
+    let mut temp_vec: Vec<u8> = vec![0; 100 * 10000];
+    let static_ref: &'static mut [u8] = temp_vec.leak();
+    let mut holder: Holder = Holder::new(static_ref);
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
+        }
+        offset += read_bytes;
+
+        // Scan backward to find the first new line (0xA)
+        let mut i: usize = 0;
+        let mut j: usize = read_bytes - 1;
+        while i < read_bytes && buf[j] != 0xA {
+            i += 1;
+            j -= 1;
+            offset -= 1;
+        }
+
+        if i > 0 {
+            let pos = i as i64;
+            rdr.seek(SeekFrom::Current(-pos))
+                .expect("Failed to seek back from current position");
+        }
+
+        let valid_buffer = &buf[0..=j];
+        let n = valid_buffer.len();
+
+        i = 0;
+        let mut start_name = i;
+        while i < n {
+            if valid_buffer[i] == b';' {
+                let mut j: usize = i + 1;
+                let start_m: usize = j;
+                while j < n {
+                    if valid_buffer[j] == 0xA {
+                        let station_name_bytes: &[u8] = &valid_buffer[start_name..i];
+                        let value = get_as_decimal(&valid_buffer[start_m..j]);
+                        match hs.get_mut(station_name_bytes) {
+                            None => {
+                                let s = StateI64::new(value);
+                                let mut k: usize = idx;
+
+                                let name = holder.push(station_name_bytes);
+                                hs.insert(name, s);
+                            }
+                            Some(prev) => prev.update(value),
+                        }
+                        if j < n - 1 {
+                            start_name = j + 1;
+                        }
+                        break;
+                    }
+                    j += 1;
+                }
+                i = j;
+            }
+            i += 1;
+        }
+    }
+    let mut all: Vec<(String, StateF64)> = hs
+        .into_iter()
+        .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
+        .collect();
     if should_sort {
         sort_result(&mut all);
     }

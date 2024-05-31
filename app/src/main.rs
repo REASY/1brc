@@ -1,6 +1,6 @@
 use brc_core::{
-    improved_impl_v1, improved_impl_v2, improved_impl_v3, improved_impl_v3_dummy, naive_impl,
-    sort_result, State,
+    improved_impl_v1, improved_impl_v2, improved_impl_v3, improved_impl_v3_dummy, improved_impl_v4,
+    naive_impl, sort_result, StateF64,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -32,12 +32,13 @@ fn main() {
         .map(|c| c.clone())
         .unwrap_or_else(|| "naive_impl".to_string());
 
-    let func = match method.as_str() {
+    let func: fn(BufReader<_>, u64, u64, bool) -> Vec<(String, StateF64)> = match method.as_str() {
         "naive_impl" => naive_impl,
         "improved_impl_v1" => improved_impl_v1,
         "improved_impl_v2" => improved_impl_v2,
         "improved_impl_v3_dummy" => improved_impl_v3_dummy,
         "improved_impl_v3" => improved_impl_v3,
+        "improved_impl_v4" => improved_impl_v4,
         x => panic!("{}", x),
     };
 
@@ -68,7 +69,7 @@ fn main() {
                     .unwrap()
             })
             .collect();
-        let mut r: Vec<Vec<(String, State)>> = Vec::with_capacity(cores);
+        let mut r: Vec<Vec<(String, StateF64)>> = Vec::with_capacity(cores);
         for t in threads {
             r.push(t.join().unwrap());
         }
@@ -76,7 +77,7 @@ fn main() {
     };
 
     // Build the final hashmap by merging all the measurements for the same location
-    let mut hs: hashbrown::HashMap<String, State> = hashbrown::HashMap::new();
+    let mut hs: hashbrown::HashMap<String, StateF64> = hashbrown::HashMap::new();
     for r in xs {
         for (k, s) in r {
             match hs.get_mut(k.as_str()) {
@@ -109,7 +110,7 @@ fn main() {
     );
 }
 
-fn prepare_output(final_result: &mut Vec<(String, State)>) -> String {
+fn prepare_output(final_result: &mut Vec<(String, StateF64)>) -> String {
     let mut res: String = String::new();
     res.push_str("{");
     for (i, (name, state)) in final_result.iter().enumerate() {
