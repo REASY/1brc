@@ -401,7 +401,7 @@ pub fn get_as_decimal(bytes: &[u8]) -> i64 {
     if is_negative {
         -(as_decimal as i64)
     } else {
-        (as_decimal as i64)
+        as_decimal as i64
     }
 }
 
@@ -788,9 +788,7 @@ pub fn improved_impl_v4<R: Read + Seek>(
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut buf = [0_u8; 5 * 1024 * 1024];
-    let idx: usize = 0;
-
-    let mut temp_vec: Vec<u8> = vec![0; 100 * 10000];
+    let temp_vec: Vec<u8> = vec![0; 100 * 10000];
     let static_ref: &'static mut [u8] = temp_vec.leak();
     let mut holder: Holder = Holder::new(static_ref);
     while offset <= end_incl_usize {
@@ -835,8 +833,6 @@ pub fn improved_impl_v4<R: Read + Seek>(
                         match hs.get_mut(station_name_bytes) {
                             None => {
                                 let s = StateI64::new(value);
-                                let mut k: usize = idx;
-
                                 let name = holder.push(station_name_bytes);
                                 hs.insert(name, s);
                             }
