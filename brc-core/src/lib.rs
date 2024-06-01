@@ -161,7 +161,7 @@ fn naive_line_by_line0<R: Read + Seek, F>(
 
 /// Reads from provided buffered reader station name and temperature and simply accumulates some dummy value.
 ///
-/// This method helps us to understand what is the fastest possible throughput in case of running very simple operation on found values.
+/// This method helps us to understand what is the maximum possible throughput in case of running very simple operation on found values.
 pub fn naive_line_by_line_dummy<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -535,40 +535,6 @@ pub fn improved_impl_v1<R: Read + Seek>(
 ) -> Vec<(String, StateF64)> {
     let mut hs: FxHashMap<String, StateF64> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    naive_line_by_line0(
-        rdr,
-        |station_name_bytes, measurement_bytes| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
-            let measurement: &str = byte_to_string_unsafe(measurement_bytes);
-            let value = custom_parse_f64(measurement);
-            match hs.get_mut(station_name) {
-                None => {
-                    let mut s = StateF64::default();
-                    s.update(value);
-                    hs.insert(station_name.to_string(), s);
-                }
-                Some(prev) => prev.update(value),
-            }
-        },
-        start,
-        end_inclusive,
-    );
-    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
-    if should_sort {
-        sort_result(&mut all);
-    }
-    all
-}
-
-pub fn improved_impl_v2<R: Read + Seek>(
-    mut rdr: BufReader<R>,
-    start: u64,
-    end_inclusive: u64,
-    should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs = hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     naive_line_by_line0(
