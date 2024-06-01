@@ -1,4 +1,3 @@
-use hashbrown::HashMap;
 use rustc_hash::FxHashMap;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -119,15 +118,15 @@ pub fn parse_f64(s: &str) -> f64 {
     f64::from_str(s).unwrap()
 }
 
-pub fn naive_impl<R: Read + Seek>(
+fn naive_line_by_line0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
+    mut processor: F,
     start: u64,
     end_inclusive: u64,
-    should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) where
+    F: FnMut(&[u8], &[u8]),
+{
     let mut offset: usize = start as usize;
-
-    let mut hs = std::collections::HashMap::new();
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut s: String = String::new();
@@ -142,20 +141,62 @@ pub fn naive_impl<R: Read + Seek>(
         while idx < s.len() && slice[idx] != b';' {
             idx += 1
         }
-        let station_name = byte_to_string(&slice[0..idx]);
-        let measurement: &str = byte_to_string(&slice[idx + 1..read_bytes - 1]);
-        let value = parse_f64(measurement);
-        match hs.get_mut(station_name) {
-            None => {
-                let mut s = StateF64::default();
-                s.update(value);
-                hs.insert(station_name.to_string(), s);
-            }
-            Some(prev) => prev.update(value),
-        }
+        let station_bytes = &slice[0..idx];
+        let measurement_bytes = &slice[idx + 1..read_bytes - 1];
+        processor(station_bytes, measurement_bytes);
 
         s.clear();
     }
+}
+
+pub fn naive_line_by_line_dummy<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    _should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut dummy_result: usize = 0;
+    naive_line_by_line0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            dummy_result += station_name_bytes.len() + measurement_bytes.len();
+        },
+        start,
+        end_inclusive,
+    );
+
+    let mut s = StateF64::default();
+    s.count = dummy_result as u64;
+    vec![("dummy".to_string(), s)]
+}
+
+pub fn naive_line_by_line<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut hs = std::collections::HashMap::new();
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    naive_line_by_line0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let station_name = byte_to_string(station_name_bytes);
+            let measurement: &str = byte_to_string(measurement_bytes);
+            let value = parse_f64(measurement);
+            match hs.get_mut(station_name) {
+                None => {
+                    let mut s = StateF64::default();
+                    s.update(value);
+                    hs.insert(station_name.to_string(), s);
+                }
+                Some(prev) => prev.update(value),
+            }
+        },
+        start,
+        end_inclusive,
+    );
 
     let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
@@ -468,37 +509,27 @@ pub fn improved_impl_v1<R: Read + Seek>(
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let mut offset: usize = start as usize;
-
     let mut hs: FxHashMap<String, StateF64> = FxHashMap::default();
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut s: String = String::new();
-    while offset <= end_inclusive as usize {
-        let read_bytes = rdr.read_line(&mut s).expect("Unable to read line");
-        offset += read_bytes;
-        if read_bytes == 0 {
-            break;
-        }
-        let slice = s.as_bytes();
-        let mut idx: usize = 0;
-        while idx < s.len() && slice[idx] != b';' {
-            idx += 1
-        }
-        let station_name: &str = byte_to_string_unsafe(&slice[0..idx]);
-        let measurement: &str = byte_to_string_unsafe(&slice[idx + 1..read_bytes - 1]);
-        let value = custom_parse_f64(measurement);
-        match hs.get_mut(station_name) {
-            None => {
-                let mut s = StateF64::default();
-                s.update(value);
-                hs.insert(station_name.to_string(), s);
+    naive_line_by_line0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
+            let measurement: &str = byte_to_string_unsafe(measurement_bytes);
+            let value = custom_parse_f64(measurement);
+            match hs.get_mut(station_name) {
+                None => {
+                    let mut s = StateF64::default();
+                    s.update(value);
+                    hs.insert(station_name.to_string(), s);
+                }
+                Some(prev) => prev.update(value),
             }
-            Some(prev) => prev.update(value),
-        }
-
-        s.clear();
-    }
+        },
+        start,
+        end_inclusive,
+    );
     let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
@@ -512,37 +543,27 @@ pub fn improved_impl_v2<R: Read + Seek>(
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let mut offset: usize = start as usize;
-
     let mut hs = hashbrown::HashMap::new();
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut s: String = String::new();
-    while offset <= end_inclusive as usize {
-        let read_bytes = rdr.read_line(&mut s).expect("Unable to read line");
-        offset += read_bytes;
-        if read_bytes == 0 {
-            break;
-        }
-        let slice = s.as_bytes();
-        let mut idx: usize = 0;
-        while idx < s.len() && slice[idx] != b';' {
-            idx += 1
-        }
-        let station_name: &str = byte_to_string_unsafe(&slice[0..idx]);
-        let measurement: &str = byte_to_string_unsafe(&slice[idx + 1..read_bytes - 1]);
-        let value = custom_parse_f64(measurement);
-        match hs.get_mut(station_name) {
-            None => {
-                let mut s = StateF64::default();
-                s.update(value);
-                hs.insert(station_name.to_string(), s);
+    naive_line_by_line0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
+            let measurement: &str = byte_to_string_unsafe(measurement_bytes);
+            let value = custom_parse_f64(measurement);
+            match hs.get_mut(station_name) {
+                None => {
+                    let mut s = StateF64::default();
+                    s.update(value);
+                    hs.insert(station_name.to_string(), s);
+                }
+                Some(prev) => prev.update(value),
             }
-            Some(prev) => prev.update(value),
-        }
-
-        s.clear();
-    }
+        },
+        start,
+        end_inclusive,
+    );
     let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
@@ -784,7 +805,7 @@ pub fn improved_impl_v4<R: Read + Seek>(
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
-    let mut hs: HashMap<&[u8], StateI64> = HashMap::with_capacity(1000);
+    let mut hs: hashbrown::HashMap<&[u8], StateI64> = hashbrown::HashMap::with_capacity(1000);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut buf = [0_u8; 5 * 1024 * 1024];

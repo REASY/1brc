@@ -1,6 +1,7 @@
 use brc_core::{
-    improved_impl_v1, improved_impl_v2, improved_impl_v3, improved_impl_v3_dummy, improved_impl_v4,
-    naive_impl, sort_result, StateF64,
+    improved_impl_v1, improved_impl_v2, improved_impl_v3, improved_impl_v3_dummy,
+    improved_impl_v3_dummy_simd_search, improved_impl_v4, naive_line_by_line,
+    naive_line_by_line_dummy, sort_result, StateF64,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -13,6 +14,8 @@ const THREAD_STACK_SIZE: usize = 10 * 1024 * 1024;
 
 /// The capacity of BufReader to improve reading
 const BUF_READER_CAPACITY: usize = 10 * 1024 * 1024;
+
+const DEFAULT_IMPL: &str = "naive_line_by_line";
 
 fn main() {
     let instant = Instant::now();
@@ -30,13 +33,15 @@ fn main() {
         .skip(3)
         .next()
         .map(|c| c.clone())
-        .unwrap_or_else(|| "naive_impl".to_string());
+        .unwrap_or_else(|| DEFAULT_IMPL.to_string());
 
     let func: fn(BufReader<_>, u64, u64, bool) -> Vec<(String, StateF64)> = match method.as_str() {
-        "naive_impl" => naive_impl,
+        "naive_line_by_line_dummy" => naive_line_by_line_dummy,
+        DEFAULT_IMPL => naive_line_by_line,
         "improved_impl_v1" => improved_impl_v1,
         "improved_impl_v2" => improved_impl_v2,
         "improved_impl_v3_dummy" => improved_impl_v3_dummy,
+        // "improved_impl_v3_dummy_simd_search" => improved_impl_v3_dummy_simd_search,
         "improved_impl_v3" => improved_impl_v3,
         "improved_impl_v4" => improved_impl_v4,
         x => panic!("{}", x),
