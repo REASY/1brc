@@ -8,11 +8,8 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Instant;
 
-/// We need large stack size to have faster reading of data. The buffer to read data is allocated in stack!
-const THREAD_STACK_SIZE: usize = 10 * 1024 * 1024;
-
 /// The capacity of BufReader to improve reading
-const BUF_READER_CAPACITY: usize = 10 * 1024 * 1024;
+const BUF_READER_CAPACITY: usize = 64 * 1024 * 1024;
 
 const DEFAULT_IMPL: &str = "naive_line_by_line";
 
@@ -61,7 +58,6 @@ fn main() {
                 let end_inclusive = *e as u64;
                 let path = path.clone();
                 thread::Builder::new()
-                    .stack_size(THREAD_STACK_SIZE)
                     .spawn(move || {
                         let rdr = BufReader::with_capacity(
                             BUF_READER_CAPACITY,

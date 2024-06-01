@@ -573,7 +573,8 @@ pub fn improved_impl_v3_dummy<R: Read + Seek>(
 
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut buf = [0_u8; 5 * 1024 * 1024];
+    let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
+    let mut buf = vec.as_mut_slice();
     let mut dummy_result: usize = 0;
 
     while offset <= end_incl_usize {
@@ -641,7 +642,7 @@ pub fn improved_impl_v3_dummy_simd_search<R: Read + Seek>(
 
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut buf = [0_u8; 5 * 1024 * 1024];
+    let mut buf = [0_u8; 64 * 1024 * 1024];
     let mut dummy_result: usize = 0;
 
     while offset <= end_incl_usize {
@@ -696,8 +697,8 @@ pub fn improved_impl_v3<R: Read + Seek>(
     let mut hs = hashbrown::HashMap::with_capacity(1000);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut buf = [0_u8; 5 * 1024 * 1024];
-
+    let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
+    let mut buf = vec.as_mut_slice();
     while offset <= end_incl_usize {
         let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
         if read_bytes == 0 {
@@ -800,10 +801,12 @@ pub fn improved_impl_v4<R: Read + Seek>(
         hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut buf = [0_u8; 5 * 1024 * 1024];
+    let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
+    let mut buf = vec.as_mut_slice();
     let temp_vec: Vec<u8> = vec![0; 100 * 10000];
     let static_ref: &'static mut [u8] = temp_vec.leak();
     let mut holder: Holder = Holder::new(static_ref);
+
     while offset <= end_incl_usize {
         let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
         if read_bytes == 0 {
