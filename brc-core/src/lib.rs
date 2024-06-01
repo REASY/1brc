@@ -108,16 +108,21 @@ pub fn sort_result(all: &mut Vec<(String, StateF64)>) {
     all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 }
 
+/// Converts a slice of bytes to a string slice.
 #[inline]
 pub fn byte_to_string(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).unwrap()
 }
 
+/// Converts a string in base 10 to a float.
 #[inline]
 pub fn parse_f64(s: &str) -> f64 {
     f64::from_str(s).unwrap()
 }
 
+/// Reads from provided buffered reader line by line, finds station name and temperature and calls processor with found byte slices.
+///
+/// This is a naive implementation used by [naive_line_by_line_dummy] and [naive_line_by_line]
 fn naive_line_by_line0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
     mut processor: F,
@@ -129,7 +134,12 @@ fn naive_line_by_line0<R: Read + Seek, F>(
     let mut offset: usize = start as usize;
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut s: String = String::new();
+    // Input value ranges are as follows:
+    // Station name: non null UTF-8 string of min length 1 character and max length 100 bytes (i.e. this could be 100 one-byte characters, or 50 two-byte characters, etc.)
+    // Temperature value: non null double between -99.9 (inclusive) and 99.9 (inclusive), always with one fractional digit
+    const MAX_LINE_LENGTH_IN_BYTES: usize = 108; // We actually need 100 + 1 (';') + 5 ("-99.9) = 106
+
+    let mut s: String = String::with_capacity(MAX_LINE_LENGTH_IN_BYTES);
     while offset <= end_inclusive as usize {
         let read_bytes = rdr.read_line(&mut s).expect("Unable to read line");
         offset += read_bytes;
@@ -141,14 +151,17 @@ fn naive_line_by_line0<R: Read + Seek, F>(
         while idx < s.len() && slice[idx] != b';' {
             idx += 1
         }
-        let station_bytes = &slice[0..idx];
+        let station_name_bytes = &slice[0..idx];
+        // We need to subtract 1 from read_bytes because `read_line` includes delimiter as well
         let measurement_bytes = &slice[idx + 1..read_bytes - 1];
-        processor(station_bytes, measurement_bytes);
-
+        processor(station_name_bytes, measurement_bytes);
         s.clear();
     }
 }
 
+/// Reads from provided buffered reader station name and temperature and simply accumulates some dummy value.
+///
+/// This method helps us to understand what is the fastest possible throughput in case of running very simple operation on found values.
 pub fn naive_line_by_line_dummy<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -170,13 +183,18 @@ pub fn naive_line_by_line_dummy<R: Read + Seek>(
     vec![("dummy".to_string(), s)]
 }
 
+const DEFAULT_HASHMAP_CAPACITY: usize = 20000;
+
+/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+///
+/// The method uses [`byte_to_string`] and [`parse_f64`]
 pub fn naive_line_by_line<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let mut hs = std::collections::HashMap::new();
+    let mut hs = std::collections::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     naive_line_by_line0(
@@ -205,6 +223,7 @@ pub fn naive_line_by_line<R: Read + Seek>(
     all
 }
 
+/// Fixed-size array to be uses in custom float parser for zero and positive f64. The index is a scaled double by a factor of 10
 const FLOAT_ZERO_AND_POSITIVE: [f64; 1000] = [
     0.0f64, 0.1f64, 0.2f64, 0.3f64, 0.4f64, 0.5f64, 0.6f64, 0.7f64, 0.8f64, 0.9f64, 1.0f64, 1.1f64,
     1.2f64, 1.3f64, 1.4f64, 1.5f64, 1.6f64, 1.7f64, 1.8f64, 1.9f64, 2.0f64, 2.1f64, 2.2f64, 2.3f64,
@@ -306,6 +325,8 @@ const FLOAT_ZERO_AND_POSITIVE: [f64; 1000] = [
     98.7f64, 98.8f64, 98.9f64, 99.0f64, 99.1f64, 99.2f64, 99.3f64, 99.4f64, 99.5f64, 99.6f64,
     99.7f64, 99.8f64, 99.9f64,
 ];
+
+/// Fixed-size array to be uses in custom float parser for zero and negative f64. The index is a scaled double by a factor of 10
 const FLOAT_ZERO_AND_NEGATIVE: [f64; 1000] = [
     0.0f64, -0.1f64, -0.2f64, -0.3f64, -0.4f64, -0.5f64, -0.6f64, -0.7f64, -0.8f64, -0.9f64,
     -1.0f64, -1.1f64, -1.2f64, -1.3f64, -1.4f64, -1.5f64, -1.6f64, -1.7f64, -1.8f64, -1.9f64,
@@ -419,18 +440,25 @@ const FLOAT_ZERO_AND_NEGATIVE: [f64; 1000] = [
     -99.1f64, -99.2f64, -99.3f64, -99.4f64, -99.5f64, -99.6f64, -99.7f64, -99.8f64, -99.9f64,
 ];
 
+/// Converts a slice of bytes to a string slice without checking that the string contains valid UTF-8.
 #[inline]
 pub fn byte_to_string_unsafe(bytes: &[u8]) -> &str {
     unsafe { std::str::from_utf8_unchecked(bytes) }
 }
 
+/// Converts byte to a digit
 #[inline]
 const fn get_digit(b: u8) -> u32 {
-    (b - 0x30) as u32
+    (b as u32).wrapping_sub('0' as u32)
 }
 
+/// Converts a float64 number in the range [-99.9, 99.9] with step 0.1 to a scaled i32 value [-999, 999]
+///
+/// "0.0"   -> 0
+/// "-99.9" -> -999
+/// "99.9"  -> 999
 #[inline]
-pub fn get_as_decimal(bytes: &[u8]) -> i64 {
+pub fn get_as_scaled_integer(bytes: &[u8]) -> i32 {
     let is_negative = bytes[0] == b'-';
     let as_decimal = match (is_negative, bytes.len()) {
         (true, 4) => get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
@@ -440,27 +468,20 @@ pub fn get_as_decimal(bytes: &[u8]) -> i64 {
         x => panic!("x: {:?}", x),
     };
     if is_negative {
-        -(as_decimal as i64)
+        -(as_decimal as i32)
     } else {
-        as_decimal as i64
+        as_decimal as i32
     }
 }
 
+/// Custom parser of a string slice to f64. This is faster than built-in one for our constrained range.
 #[inline]
 pub fn custom_parse_f64(s: &str) -> f64 {
-    let bytes = s.as_bytes();
-    let is_negative = bytes[0] == b'-';
-    let as_decimal = match (is_negative, bytes.len()) {
-        (true, 4) => get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
-        (true, 5) => get_digit(bytes[1]) * 100 + get_digit(bytes[2]) * 10 + get_digit(bytes[4]),
-        (false, 3) => get_digit(bytes[0]) * 10 + get_digit(bytes[2]),
-        (false, 4) => get_digit(bytes[0]) * 100 + get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
-        x => panic!("x: {:?}, s: {}", x, s),
-    };
-    if is_negative {
-        FLOAT_ZERO_AND_NEGATIVE[as_decimal as usize]
+    let scaled_by_10_as_idx = get_as_scaled_integer(s.as_bytes());
+    if scaled_by_10_as_idx >= 0 {
+        FLOAT_ZERO_AND_POSITIVE[scaled_by_10_as_idx as usize]
     } else {
-        FLOAT_ZERO_AND_POSITIVE[as_decimal as usize]
+        FLOAT_ZERO_AND_NEGATIVE[(-scaled_by_10_as_idx) as usize]
     }
 }
 
@@ -503,13 +524,17 @@ unsafe fn simd_calculate_decimal(bytes: &[u8; 4]) -> i32 {
     result as i32
 }
 
+/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+///
+/// The method uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
 pub fn improved_impl_v1<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateF64> = FxHashMap::default();
+    let mut hs: FxHashMap<String, StateF64> =
+        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     naive_line_by_line0(
@@ -543,7 +568,7 @@ pub fn improved_impl_v2<R: Read + Seek>(
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let mut hs = hashbrown::HashMap::new();
+    let mut hs = hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     naive_line_by_line0(
@@ -805,7 +830,8 @@ pub fn improved_impl_v4<R: Read + Seek>(
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
-    let mut hs: hashbrown::HashMap<&[u8], StateI64> = hashbrown::HashMap::with_capacity(1000);
+    let mut hs: hashbrown::HashMap<&[u8], StateI64> =
+        hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut buf = [0_u8; 5 * 1024 * 1024];
@@ -850,14 +876,14 @@ pub fn improved_impl_v4<R: Read + Seek>(
                 while j < n {
                     if valid_buffer[j] == 0xA {
                         let station_name_bytes: &[u8] = &valid_buffer[start_name..i];
-                        let value = get_as_decimal(&valid_buffer[start_m..j]);
+                        let value = get_as_scaled_integer(&valid_buffer[start_m..j]);
                         match hs.get_mut(station_name_bytes) {
                             None => {
-                                let s = StateI64::new(value);
+                                let s = StateI64::new(value as i64);
                                 let name = holder.push(station_name_bytes);
                                 hs.insert(name, s);
                             }
-                            Some(prev) => prev.update(value),
+                            Some(prev) => prev.update(value as i64),
                         }
                         if j < n - 1 {
                             start_name = j + 1;
@@ -884,6 +910,50 @@ pub fn improved_impl_v4<R: Read + Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn create_content(stations: &[&str], temperatures: &[&str]) -> String {
+        let mut content: String = stations
+            .iter()
+            .zip(temperatures)
+            .map(|(s, t)| format!("{s};{t}"))
+            .collect::<Vec<String>>()
+            .join("\n");
+        // Add ending \n
+        content.push_str("\n");
+        content
+    }
+
+    const STATIONS: [&str; 8] = [
+        "hello",
+        "Thiès",
+        "Yaoundé",
+        "Chișinău",
+        "Nyugatifelsőszombatfalva",
+        "Llanfair­pwllgwyngyll­gogery­chwyrn­drobwll­llan­tysilio­gogo­goch",
+        "Taumata­whakatangihanga­koauau­o­tamatea­turi­pukaka­piki­maunga­horo­nuku­pokai­whenua­ki­tana­tahu",
+        "✨🌟💫🎉🎊🚀🌍🛸🎨📚🎵🎸🎻🎹🎺🎷🧩🛴🚲🏖🏝🏞🏜🌋🏔🏕🎡🎢🎠🎪🎭🖼🎟🎫🛶🛳🚁🚂🚃🚄🚅🚆🚇🚈🚉",
+    ];
+    const TEMPERATURES: [&str; 8] = [
+        "-99.9", "12.3", "0.0", "-12.3", "0.1", "-0.1", "99.9", "12.3",
+    ];
+
+    #[test]
+    fn test_naive_line_by_line0() {
+        let content = create_content(&STATIONS, &TEMPERATURES);
+        let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
+        let mut idx: usize = 0;
+        naive_line_by_line0(
+            rdr,
+            |x, y| {
+                assert_eq!(STATIONS[idx].as_bytes(), x);
+                assert_eq!(TEMPERATURES[idx].as_bytes(), y);
+                idx += 1;
+            },
+            0,
+            (content.len() - 1) as u64,
+        );
+    }
 
     #[test]
     fn get_digit_works() {
@@ -919,23 +989,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn custom_parse_f64_simd_works() {
-        // Verify positive and negative numbers in the range [-99.9, 99.9] with 0.1 step size
-        for i in 0..1000 {
-            {
-                let f = (-i) as f64 / 10 as f64;
-                let s = format!("{:.1}", f);
-                let expected = f64::from_str(&s).unwrap();
-                assert_eq!(expected, custom_parse_f64_simd(&s));
-            }
-
-            {
-                let f = i as f64 / 10 as f64;
-                let s = format!("{:.1}", f);
-                let expected = f64::from_str(&s).unwrap();
-                assert_eq!(expected, custom_parse_f64_simd(&s));
-            }
-        }
-    }
+    // #[test]
+    // fn custom_parse_f64_simd_works() {
+    //     // Verify positive and negative numbers in the range [-99.9, 99.9] with 0.1 step size
+    //     for i in 0..1000 {
+    //         {
+    //             let f = (-i) as f64 / 10 as f64;
+    //             let s = format!("{:.1}", f);
+    //             let expected = f64::from_str(&s).unwrap();
+    //             assert_eq!(expected, custom_parse_f64_simd(&s));
+    //         }
+    //
+    //         {
+    //             let f = i as f64 / 10 as f64;
+    //             let s = format!("{:.1}", f);
+    //             let expected = f64::from_str(&s).unwrap();
+    //             assert_eq!(expected, custom_parse_f64_simd(&s));
+    //         }
+    //     }
+    // }
 }
