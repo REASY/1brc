@@ -629,21 +629,6 @@ fn parse_large_chunks0<R: Read + Seek, F>(
         while i < n {
             if valid_buffer[i] == b';' {
                 let mut j: usize = i + 1;
-                // let start_measurement_idx: usize = j;
-                // while j < n {
-                //     if valid_buffer[j] == b'\n' {
-                //         let station_name_bytes = &valid_buffer[next_name_idx..i];
-                //         let measurement_bytes = &valid_buffer[start_measurement_idx..j];
-                //         processor(station_name_bytes, measurement_bytes);
-                //
-                //         // Assign next name index
-                //         if j < n - 1 {
-                //             next_name_idx = j + 1;
-                //         }
-                //         break;
-                //     }
-                //     j += 1;
-                // }
                 let start_measurement_idx: usize = j;
                 // The shortest temperature as string is "X.Y" that has length = 3
                 j += 3;
