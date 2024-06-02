@@ -192,16 +192,14 @@ const DEFAULT_HASHMAP_CAPACITY: usize = 20000;
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
-/// The method uses [`byte_to_string`] and [`parse_f64`]
+/// The method uses [`byte_to_string`], [`parse_f64`] and [`std::collections::HashMap`] from standard library.
 pub fn naive_line_by_line<R: Read + Seek>(
-    mut rdr: BufReader<R>,
+    rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
     let mut hs = std::collections::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
     naive_line_by_line0(
         rdr,
         |station_name_bytes, measurement_bytes| {
@@ -536,15 +534,13 @@ unsafe fn simd_calculate_decimal(bytes: &[u8; 4]) -> i32 {
 ///
 /// The method relies on [`naive_line_by_line0`] but uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
 pub fn naive_line_by_line_v2<R: Read + Seek>(
-    mut rdr: BufReader<R>,
+    rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
     let mut hs: FxHashMap<String, StateF64> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
     naive_line_by_line0(
         rdr,
         |station_name_bytes, measurement_bytes| {
@@ -592,6 +588,8 @@ fn seek_backward_to_newline<'a, R: Read + Seek>(
     let valid_buffer = &buf[0..=j];
     valid_buffer
 }
+
+const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 64 * 1024 * 1024;
 
 /// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
 ///
@@ -653,6 +651,8 @@ fn parse_large_chunks0<R: Read + Seek, F>(
             }
             i += 1;
         }
+
+        offset += n;
     }
 }
 
@@ -670,6 +670,124 @@ pub fn parse_large_chunks_dummy<R: Read + Seek>(
         },
         start,
         end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
+
+    let mut s = StateF64::default();
+    s.count = dummy_result as u64;
+    vec![("dummy".to_string(), s)]
+}
+
+/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+///
+/// The method relies on [`parse_large_chunks0`] and uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`] that makes it ~1.8 times faster than [`naive_line_by_line_v2`]
+pub fn parse_large_chunks<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut hs: FxHashMap<String, StateF64> =
+        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
+    parse_large_chunks0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
+            let measurement: &str = byte_to_string_unsafe(measurement_bytes);
+            let value = custom_parse_f64(measurement);
+            match hs.get_mut(station_name) {
+                None => {
+                    let mut s = StateF64::default();
+                    s.update(value);
+                    hs.insert(station_name.to_string(), s);
+                }
+                Some(prev) => prev.update(value),
+            }
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
+    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+/// Reads from provided buffered reader in large chunks, parses it line by line using [`memchr::memchr`], finds station name and temperature and calls processor with found byte slices.
+///
+/// This is around 1.13 times faster than [`parse_large_chunks0`] at raw parsing speed.
+fn parse_large_chunks_simd0<R: Read + Seek, F>(
+    mut rdr: BufReader<R>,
+    mut processor: F,
+    start: u64,
+    end_inclusive: u64,
+    buffer_size: usize,
+) where
+    F: FnMut(&[u8], &[u8]),
+{
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset: usize = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut vec: Vec<u8> = vec![0; buffer_size];
+    let mut buf = vec.as_mut_slice();
+
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
+        }
+        let valid_buffer = {
+            // Scan backward to find the first new line (0xA)
+            let buf_to_scan_backward = &buf[0..read_bytes];
+            let idx = memchr::memrchr(b'\n', &buf_to_scan_backward).unwrap();
+            let i: usize = buf_to_scan_backward.len() - 1 - idx;
+            let j: usize = read_bytes - 1 - i;
+            assert!(j < read_bytes, "j: {j}, read_bytes: {read_bytes}");
+
+            if i > 0 {
+                let pos = i as i64;
+                rdr.seek(SeekFrom::Current(-pos))
+                    .expect("Failed to seek back from current position");
+            }
+            &buf_to_scan_backward[0..=j]
+        };
+        let mut next_name_idx = 0;
+        for it in memchr::memchr_iter(b';', &valid_buffer) {
+            let station_name_bytes = &valid_buffer[next_name_idx..it];
+
+            let inner_buf = &valid_buffer[it + 1..];
+            let idx = memchr::memchr(b'\n', &inner_buf).unwrap();
+            let measurement_bytes = &inner_buf[..idx];
+            // Call processor to handle the temperature for the station
+            processor(station_name_bytes, measurement_bytes);
+
+            next_name_idx = it + 1 + idx + 1;
+        }
+        offset += valid_buffer.len();
+    }
+}
+
+pub fn parse_large_chunks_simd_dummy<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    _should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut dummy_result: usize = 0;
+    parse_large_chunks_simd0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            dummy_result += station_name_bytes.len() + measurement_bytes.len();
+        },
+        start,
+        end_inclusive,
         64 * 1024 * 1024,
     );
 
@@ -678,135 +796,36 @@ pub fn parse_large_chunks_dummy<R: Read + Seek>(
     vec![("dummy".to_string(), s)]
 }
 
-pub fn improved_impl_v3_dummy_simd_search<R: Read + Seek>(
-    mut rdr: BufReader<R>,
-    start: u64,
-    end_inclusive: u64,
-    _should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let end_incl_usize = end_inclusive as usize;
-    let mut offset: usize = start as usize;
-
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    let mut buf = [0_u8; 64 * 1024 * 1024];
-    let mut dummy_result: usize = 0;
-
-    while offset <= end_incl_usize {
-        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
-        if read_bytes == 0 {
-            break;
-        }
-        let remaining = end_incl_usize - offset + 1;
-        if remaining < buf.len() {
-            read_bytes = remaining;
-        }
-        offset += read_bytes;
-
-        // Scan backward to find the first new line (0xA)
-        let valid_buffer = &buf[0..read_bytes];
-        let idx = memchr::memrchr(0xa, &valid_buffer).unwrap();
-
-        let i: usize = valid_buffer.len() - 1 - idx;
-        offset -= i;
-        let j: usize = read_bytes - 1 - i;
-        if i > 0 {
-            let pos = i as i64;
-            rdr.seek(SeekFrom::Current(-pos))
-                .expect("Failed to seek back from current position");
-        }
-        assert!(j < read_bytes, "j: {j}, read_bytes: {read_bytes}");
-
-        let valid_buffer = &valid_buffer[0..=j];
-        let mut start_name = 0;
-        for it in memchr::memchr_iter(b';', &valid_buffer) {
-            let inner_buf = &valid_buffer[it..];
-            let idx = memchr::memchr(0xa, &inner_buf).unwrap();
-            start_name = idx + 1;
-
-            dummy_result += 1 + start_name;
-        }
-    }
-    let mut s = StateF64::default();
-    s.count = dummy_result as u64;
-    vec![("dummy".to_string(), s)]
-}
-
-pub fn improved_impl_v3<R: Read + Seek>(
-    mut rdr: BufReader<R>,
+/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+///
+/// The method relies on [`parse_large_chunks_simd0`] and uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks`]
+pub fn parse_large_chunks_simd<R: Read + Seek>(
+    rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let end_incl_usize = end_inclusive as usize;
-    let mut offset: usize = start as usize;
-
-    let mut hs = hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
-    let mut buf = vec.as_mut_slice();
-    while offset <= end_incl_usize {
-        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
-        if read_bytes == 0 {
-            break;
-        }
-        let remaining = end_incl_usize - offset + 1;
-        if remaining < buf.len() {
-            read_bytes = remaining;
-        }
-        offset += read_bytes;
-
-        // Scan backward to find the first new line (0xA)
-        let mut i: usize = 0;
-        let mut j: usize = read_bytes - 1;
-        while i < read_bytes && buf[j] != 0xA {
-            i += 1;
-            j -= 1;
-            offset -= 1;
-        }
-
-        if i > 0 {
-            let pos = i as i64;
-            rdr.seek(SeekFrom::Current(-pos))
-                .expect("Failed to seek back from current position");
-        }
-
-        let valid_buffer = &buf[0..=j];
-        let n = valid_buffer.len();
-
-        i = 0;
-        let mut start_name = i;
-        while i < n {
-            if valid_buffer[i] == b';' {
-                let mut j: usize = i + 1;
-                let start_m: usize = j;
-                while j < n {
-                    if valid_buffer[j] == 0xA {
-                        let station_name: &str =
-                            byte_to_string_unsafe(&valid_buffer[start_name..i]);
-                        let measurement: &str = byte_to_string_unsafe(&valid_buffer[start_m..j]);
-                        let value = custom_parse_f64(measurement);
-                        match hs.get_mut(station_name) {
-                            None => {
-                                let mut s = StateF64::default();
-                                s.update(value);
-                                hs.insert(station_name.to_string(), s);
-                            }
-                            Some(prev) => prev.update(value),
-                        }
-                        if j < n - 1 {
-                            start_name = j + 1;
-                        }
-                        break;
-                    }
-                    j += 1;
+    let mut hs: FxHashMap<String, StateF64> =
+        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
+    parse_large_chunks_simd0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
+            let measurement: &str = byte_to_string_unsafe(measurement_bytes);
+            let value = custom_parse_f64(measurement);
+            match hs.get_mut(station_name) {
+                None => {
+                    let mut s = StateF64::default();
+                    s.update(value);
+                    hs.insert(station_name.to_string(), s);
                 }
-                i = j;
+                Some(prev) => prev.update(value),
             }
-            i += 1;
-        }
-    }
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
     let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
@@ -840,84 +859,39 @@ impl<'a> Holder<'a> {
     }
 }
 
-pub fn improved_impl_v4<R: Read + Seek>(
-    mut rdr: BufReader<R>,
+/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+///
+/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI64`], [`hashbrown::HashMap`], could be slightly faster than [`parse_large_chunks_simd`] or [`parse_large_chunks`]
+pub fn parse_large_chunks_v1<R: Read + Seek>(
+    rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let end_incl_usize = end_inclusive as usize;
-    let mut offset: usize = start as usize;
-
-    let mut hs = hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
-    let mut buf = vec.as_mut_slice();
+    let mut hs: hashbrown::HashMap<&[u8], StateI64> =
+        hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
 
     let temp_vec: Vec<u8> = vec![0; 100 * 10000];
     let static_ref: &'static mut [u8] = temp_vec.leak();
     let mut holder: Holder = Holder::new(static_ref);
 
-    while offset <= end_incl_usize {
-        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
-        if read_bytes == 0 {
-            break;
-        }
-        let remaining = end_incl_usize - offset + 1;
-        if remaining < buf.len() {
-            read_bytes = remaining;
-        }
-        offset += read_bytes;
-
-        // Scan backward to find the first new line (0xA)
-        let mut i: usize = 0;
-        let mut j: usize = read_bytes - 1;
-        while i < read_bytes && buf[j] != 0xA {
-            i += 1;
-            j -= 1;
-            offset -= 1;
-        }
-
-        if i > 0 {
-            let pos = i as i64;
-            rdr.seek(SeekFrom::Current(-pos))
-                .expect("Failed to seek back from current position");
-        }
-
-        let valid_buffer = &buf[0..=j];
-        let n = valid_buffer.len();
-
-        i = 0;
-        let mut start_name = i;
-        while i < n {
-            if valid_buffer[i] == b';' {
-                let mut j: usize = i + 1;
-                let start_m: usize = j;
-                while j < n {
-                    if valid_buffer[j] == 0xA {
-                        let station_name_bytes: &[u8] = &valid_buffer[start_name..i];
-                        let value = get_as_scaled_integer(&valid_buffer[start_m..j]);
-                        match hs.get_mut(station_name_bytes) {
-                            None => {
-                                let s = StateI64::new(value as i64);
-                                let name = holder.store(station_name_bytes);
-                                hs.insert(name, s);
-                            }
-                            Some(prev) => prev.update(value as i64),
-                        }
-                        if j < n - 1 {
-                            start_name = j + 1;
-                        }
-                        break;
-                    }
-                    j += 1;
+    parse_large_chunks_simd0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let value = get_as_scaled_integer(measurement_bytes);
+            match hs.get_mut(station_name_bytes) {
+                None => {
+                    let s = StateI64::new(value as i64);
+                    let name = holder.store(station_name_bytes);
+                    hs.insert(name, s);
                 }
-                i = j;
+                Some(prev) => prev.update(value as i64),
             }
-            i += 1;
-        }
-    }
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
     let mut all: Vec<(String, StateF64)> = hs
         .into_iter()
         .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
@@ -1101,11 +1075,29 @@ mod tests {
     }
 
     #[test]
-    fn test_read_and_parse_large_chunks0() {
+    fn test_parse_large_chunks0() {
         let content = create_content(&STATIONS, &TEMPERATURES);
         let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
         let mut idx: usize = 0;
         parse_large_chunks0(
+            rdr,
+            |x, y| {
+                assert_eq!(STATIONS[idx].as_bytes(), x);
+                assert_eq!(TEMPERATURES[idx].as_bytes(), y);
+                idx += 1;
+            },
+            0,
+            (content.len() - 1) as u64,
+            106,
+        );
+    }
+
+    #[test]
+    fn test_parse_large_chunks_simd0() {
+        let content = create_content(&STATIONS, &TEMPERATURES);
+        let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
+        let mut idx: usize = 0;
+        parse_large_chunks_simd0(
             rdr,
             |x, y| {
                 assert_eq!(STATIONS[idx].as_bytes(), x);
