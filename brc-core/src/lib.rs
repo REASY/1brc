@@ -870,10 +870,10 @@ pub fn parse_large_chunks_v1<R: Read + Seek>(
 ) -> Vec<(String, StateF64)> {
     let mut hs: hashbrown::HashMap<&[u8], StateI64> =
         hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
-
-    let temp_vec: Vec<u8> = vec![0; 100 * 10000];
-    let static_ref: &'static mut [u8] = temp_vec.leak();
-    let mut holder: Holder = Holder::new(static_ref);
+    let mut holder: Holder = {
+        let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
+        Holder::new(static_ref)
+    };
 
     parse_large_chunks_simd0(
         rdr,
