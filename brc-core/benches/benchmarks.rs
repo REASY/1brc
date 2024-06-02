@@ -1,7 +1,7 @@
 use brc_core::{
-    byte_to_string, byte_to_string_unsafe, custom_parse_f64, improved_impl_v1, improved_impl_v3,
-    improved_impl_v3_dummy, improved_impl_v3_dummy_simd_search, improved_impl_v4,
-    naive_line_by_line, naive_line_by_line_dummy, parse_f64,
+    byte_to_string, byte_to_string_unsafe, custom_parse_f64, improved_impl_v3,
+    improved_impl_v3_dummy_simd_search, improved_impl_v4, naive_line_by_line,
+    naive_line_by_line_dummy, naive_line_by_line_v2, parse_f64, parse_large_chunks_dummy,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use std::io::{BufReader, Cursor};
@@ -27,7 +27,7 @@ fn improved_impl_v1_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v1(rdr, 0, (bytes.len() as u64) - 1, false);
+    let r = naive_line_by_line_v2(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 
@@ -43,7 +43,7 @@ fn improved_impl_v3_dummy_benchmark(bytes: &[u8]) {
     assert_ne!(0, bytes.len());
 
     let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(bytes));
-    let r = improved_impl_v3_dummy(rdr, 0, (bytes.len() as u64) - 1, false);
+    let r = parse_large_chunks_dummy(rdr, 0, (bytes.len() as u64) - 1, false);
     black_box(r);
 }
 

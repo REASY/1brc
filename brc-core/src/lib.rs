@@ -142,19 +142,24 @@ fn naive_line_by_line0<R: Read + Seek, F>(
     let mut s: String = String::with_capacity(MAX_LINE_LENGTH_IN_BYTES);
     while offset <= end_inclusive as usize {
         let read_bytes = rdr.read_line(&mut s).expect("Unable to read line");
-        offset += read_bytes;
+        // Check whether we reached EOF
         if read_bytes == 0 {
             break;
         }
+        offset += read_bytes;
         let slice = s.as_bytes();
         let mut idx: usize = 0;
+        // Find station name
         while idx < s.len() && slice[idx] != b';' {
             idx += 1
         }
         let station_name_bytes = &slice[0..idx];
+        // The remaining bytes are for temperature
         // We need to subtract 1 from read_bytes because `read_line` includes delimiter as well
         let measurement_bytes = &slice[idx + 1..read_bytes - 1];
+        // Call processor to handle the temperature for the station
         processor(station_name_bytes, measurement_bytes);
+        // Clear the buffer to make sure next read won't have data from previous read
         s.clear();
     }
 }
@@ -200,9 +205,12 @@ pub fn naive_line_by_line<R: Read + Seek>(
     naive_line_by_line0(
         rdr,
         |station_name_bytes, measurement_bytes| {
-            let station_name = byte_to_string(station_name_bytes);
+            // Convert bytes to str
+            let station_name: &str = byte_to_string(station_name_bytes);
             let measurement: &str = byte_to_string(measurement_bytes);
+            // Parse measurement as f64
             let value = parse_f64(measurement);
+            // Insert new state or update existing
             match hs.get_mut(station_name) {
                 None => {
                     let mut s = StateF64::default();
@@ -452,7 +460,7 @@ const fn get_digit(b: u8) -> u32 {
     (b as u32).wrapping_sub('0' as u32)
 }
 
-/// Converts a float64 number in the range [-99.9, 99.9] with step 0.1 to a scaled i32 value [-999, 999]
+/// Converts a float number in the range [-99.9, 99.9] with step 0.1 provided as bytes of str to a scaled i32 value [-999, 999]
 ///
 /// "0.0"   -> 0
 /// "-99.9" -> -999
@@ -526,8 +534,8 @@ unsafe fn simd_calculate_decimal(bytes: &[u8; 4]) -> i32 {
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
-/// The method uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
-pub fn improved_impl_v1<R: Read + Seek>(
+/// The method relies on [`naive_line_by_line0`] but uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
+pub fn naive_line_by_line_v2<R: Read + Seek>(
     mut rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
@@ -562,21 +570,47 @@ pub fn improved_impl_v1<R: Read + Seek>(
     all
 }
 
-pub fn improved_impl_v3_dummy<R: Read + Seek>(
+fn seek_backward_to_newline<'a, R: Read + Seek>(
+    rdr: &mut BufReader<R>,
+    buf: &'a [u8],
+    read_bytes: usize,
+) -> &'a [u8] {
+    // Scan backward to find the first new line
+    let mut i: usize = 0;
+    let mut j: usize = read_bytes - 1;
+    while i < read_bytes && buf[j] != b'\n' {
+        i += 1;
+        j -= 1;
+    }
+
+    if i > 0 {
+        let pos = i as i64;
+        rdr.seek(SeekFrom::Current(-pos))
+            .expect("Failed to seek back from current position");
+    }
+
+    let valid_buffer = &buf[0..=j];
+    valid_buffer
+}
+
+/// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
+///
+/// This is around 3 times faster than [`naive_line_by_line`] at raw parsing speed.
+fn parse_large_chunks0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
+    mut processor: F,
     start: u64,
     end_inclusive: u64,
-    _should_sort: bool,
-) -> Vec<(String, StateF64)> {
+    buffer_size: usize,
+) where
+    F: FnMut(&[u8], &[u8]),
+{
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
-
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
-    let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
+    let mut vec: Vec<u8> = vec![0; buffer_size];
     let mut buf = vec.as_mut_slice();
-    let mut dummy_result: usize = 0;
-
     while offset <= end_incl_usize {
         let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
         if read_bytes == 0 {
@@ -586,46 +620,74 @@ pub fn improved_impl_v3_dummy<R: Read + Seek>(
         if remaining < buf.len() {
             read_bytes = remaining;
         }
-        offset += read_bytes;
 
-        // Scan backward to find the first new line (0xA)
-        let mut i: usize = 0;
-        let mut j: usize = read_bytes - 1;
-        while i < read_bytes && buf[j] != 0xA {
-            i += 1;
-            j -= 1;
-            offset -= 1;
-        }
-
-        if i > 0 {
-            let pos = i as i64;
-            rdr.seek(SeekFrom::Current(-pos))
-                .expect("Failed to seek back from current position");
-        }
-
-        let valid_buffer = &buf[0..=j];
+        let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
         let n = valid_buffer.len();
 
-        i = 0;
-        let mut start_name = i;
+        let mut i: usize = 0;
+        let mut next_name_idx = 0;
         while i < n {
             if valid_buffer[i] == b';' {
                 let mut j: usize = i + 1;
-                while j < n {
-                    if valid_buffer[j] == 0xA {
-                        dummy_result += 1 + start_name;
-                        if j < n - 1 {
-                            start_name = j + 1;
-                        }
-                        break;
-                    }
+                // let start_measurement_idx: usize = j;
+                // while j < n {
+                //     if valid_buffer[j] == b'\n' {
+                //         let station_name_bytes = &valid_buffer[next_name_idx..i];
+                //         let measurement_bytes = &valid_buffer[start_measurement_idx..j];
+                //         processor(station_name_bytes, measurement_bytes);
+                //
+                //         // Assign next name index
+                //         if j < n - 1 {
+                //             next_name_idx = j + 1;
+                //         }
+                //         break;
+                //     }
+                //     j += 1;
+                // }
+                let start_measurement_idx: usize = j;
+                // The shortest temperature as string is "X.Y" that has length = 3
+                j += 3;
+                // Check remaining 2 bytes that could be because of number like "-XY.Z"
+                if valid_buffer[j] != b'\n' {
                     j += 1;
                 }
+                if valid_buffer[j] != b'\n' {
+                    j += 1;
+                }
+                let station_name_bytes = &valid_buffer[next_name_idx..i];
+                let measurement_bytes = &valid_buffer[start_measurement_idx..j];
+                // Call processor to handle the temperature for the station
+                processor(station_name_bytes, measurement_bytes);
+
+                // Assign next name index
+                if j < n - 1 {
+                    next_name_idx = j + 1;
+                }
+
                 i = j;
             }
             i += 1;
         }
     }
+}
+
+pub fn parse_large_chunks_dummy<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    _should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut dummy_result: usize = 0;
+    parse_large_chunks0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            dummy_result += station_name_bytes.len() + measurement_bytes.len();
+        },
+        start,
+        end_inclusive,
+        64 * 1024 * 1024,
+    );
+
     let mut s = StateF64::default();
     s.count = dummy_result as u64;
     vec![("dummy".to_string(), s)]
@@ -694,7 +756,7 @@ pub fn improved_impl_v3<R: Read + Seek>(
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
-    let mut hs = hashbrown::HashMap::with_capacity(1000);
+    let mut hs = hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
@@ -767,23 +829,28 @@ pub fn improved_impl_v3<R: Read + Seek>(
     all
 }
 
-/// Credits to @R3M4TCH for helping to fix
+/// Holder allows you store slices of bytes inside that can later be used directly as a key in HashMap
+///
+/// Credits to @R3M4TCH for helping to fix this holder struct
 /// https://discord.com/channels/442252698964721669/448238009733742612/1245967276578963498
 struct Holder<'a> {
     values: &'a mut [u8],
 }
 
 impl<'a> Holder<'a> {
-    fn push(&mut self, bytes: &[u8]) -> &'a [u8] {
+    fn store(&mut self, bytes: &[u8]) -> &'a [u8] {
+        let bytes_len = bytes.len();
         let values = std::mem::take(&mut self.values);
-        values[..bytes.len()].copy_from_slice(bytes);
+        values[..bytes_len].copy_from_slice(bytes);
         // the head will be the piece we wrote to
-        let (head, tail) = values.split_at_mut(bytes.len());
+        let (head, tail) = values.split_at_mut(bytes_len);
         self.values = tail;
         head
     }
 
     fn new(values: &'static mut [u8]) -> Holder<'a> {
+        assert_ne!(0, values.len());
+
         Holder { values }
     }
 }
@@ -797,12 +864,12 @@ pub fn improved_impl_v4<R: Read + Seek>(
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
 
-    let mut hs: hashbrown::HashMap<&[u8], StateI64> =
-        hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
+    let mut hs = hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     let mut vec: Vec<u8> = vec![0; 64 * 1024 * 1024];
     let mut buf = vec.as_mut_slice();
+
     let temp_vec: Vec<u8> = vec![0; 100 * 10000];
     let static_ref: &'static mut [u8] = temp_vec.leak();
     let mut holder: Holder = Holder::new(static_ref);
@@ -849,7 +916,7 @@ pub fn improved_impl_v4<R: Read + Seek>(
                         match hs.get_mut(station_name_bytes) {
                             None => {
                                 let s = StateI64::new(value as i64);
-                                let name = holder.push(station_name_bytes);
+                                let name = holder.store(station_name_bytes);
                                 hs.insert(name, s);
                             }
                             Some(prev) => prev.update(value as i64),
@@ -893,36 +960,109 @@ mod tests {
         content
     }
 
-    const STATIONS: [&str; 8] = [
+    const STATIONS: [&str; 90] = [
         "hello",
         "Thiès",
         "Yaoundé",
         "Chișinău",
         "Nyugatifelsőszombatfalva",
         "Llanfair­pwllgwyngyll­gogery­chwyrn­drobwll­llan­tysilio­gogo­goch",
-        "Taumata­whakatangihanga­koauau­o­tamatea­turi­pukaka­piki­maunga­horo­nuku­pokai­whenua­ki­tana­tahu",
-        "✨🌟💫🎉🎊🚀🌍🛸🎨📚🎵🎸🎻🎹🎺🎷🧩🛴🚲🏖🏝🏞🏜🌋🏔🏕🎡🎢🎠🎪🎭🖼🎟🎫🛶🛳🚁🚂🚃🚄🚅🚆🚇🚈🚉",
+        "Taumata­whakatangihanga­koauau­o­tamatea­turi­pukaka­piki­maunga­horo­nuku­pokai­whenua",
+        "✨🌟💫🎉🎊🚀🌍🛸🎨📚🎵🎸🎻🎹🎺🎷🧩🛴🚲🏖🏝🏞🏜🌋🏔",
+        "Tromsø",
+        "Hamilton",
+        "Nassau",
+        "Bishkek",
+        "Dallas",
+        "Copenhagen",
+        "Ashgabat",
+        "Zagreb",
+        "Kandi",
+        "Chișinău",
+        "Sapporo",
+        "Da Lat",
+        "Malé",
+        "Irkutsk",
+        "Ürümqi",
+        "Los Angeles",
+        "Dar es Salaam",
+        "Port Vila",
+        "Suva",
+        "Charlotte",
+        "Tirana",
+        "Ifrane",
+        "Vienna",
+        "Port Vila",
+        "Bamako",
+        "San Antonio",
+        "Algiers",
+        "Oranjestad",
+        "Wau",
+        "Nassau",
+        "Tirana",
+        "Split",
+        "Houston",
+        "Kankan",
+        "Hamilton",
+        "Ndola",
+        "Ouagadougou",
+        "Bosaso",
+        "Pontianak",
+        "Dublin",
+        "Valencia",
+        "Ottawa",
+        "Djibouti",
+        "Bergen",
+        "Minsk",
+        "Lyon",
+        "Phnom Penh",
+        "Tallinn",
+        "Budapest",
+        "Indianapolis",
+        "Bouaké",
+        "Launceston",
+        "Kankan",
+        "Panama City",
+        "Nicosia",
+        "Rabat",
+        "Ngaoundéré",
+        "Marrakesh",
+        "Fairbanks",
+        "Prague",
+        "Toronto",
+        "Palembang",
+        "Tabora",
+        "Calgary",
+        "Tromsø",
+        "Dikson",
+        "Bujumbura",
+        "Alice Springs",
+        "Erzurum",
+        "Port Moresby",
+        "Guatemala City",
+        "Philadelphia",
+        "Bissau",
+        "Hobart",
+        "Accra",
+        "Abha",
+        "Winnipeg",
+        "Praia",
+        "Palermo",
+        "Madrid",
+        "Salt Lake City",
+        "Denver",
     ];
-    const TEMPERATURES: [&str; 8] = [
-        "-99.9", "12.3", "0.0", "-12.3", "0.1", "-0.1", "99.9", "12.3",
+    const TEMPERATURES: [&str; 90] = [
+        "-99.9", "12.3", "0.0", "-12.3", "0.1", "-0.1", "99.9", "12.3", "4.9", "14.8", "26.8",
+        "7.8", "29.4", "16.4", "31.7", "15.6", "28.5", "5.1", "18.2", "12.6", "28.1", "-7.1",
+        "-6.9", "11.1", "24.4", "27.6", "19.8", "22.7", "20.9", "-0.8", "-9.0", "30.3", "11.4",
+        "10.3", "27.8", "16.1", "26.0", "9.1", "7.9", "7.1", "28.4", "46.4", "5.3", "31.2", "35.8",
+        "45.3", "23.2", "25.2", "16.2", "-10.6", "47.8", "24.0", "-6.9", "19.2", "22.0", "20.2",
+        "13.4", "22.7", "34.3", "8.9", "28.4", "35.6", "5.0", "22.1", "39.9", "21.2", "18.8",
+        "-2.9", "11.1", "34.9", "9.8", "4.3", "-6.1", "-14.6", "30.6", "11.6", "9.3", "45.2",
+        "23.7", "19.4", "22.4", "21.2", "20.2", "20.4", "-4.3", "18.4", "24.3", "9.0", "10.4",
+        "19.9",
     ];
-
-    #[test]
-    fn test_naive_line_by_line0() {
-        let content = create_content(&STATIONS, &TEMPERATURES);
-        let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
-        let mut idx: usize = 0;
-        naive_line_by_line0(
-            rdr,
-            |x, y| {
-                assert_eq!(STATIONS[idx].as_bytes(), x);
-                assert_eq!(TEMPERATURES[idx].as_bytes(), y);
-                idx += 1;
-            },
-            0,
-            (content.len() - 1) as u64,
-        );
-    }
 
     #[test]
     fn get_digit_works() {
@@ -956,6 +1096,41 @@ mod tests {
                 assert_eq!(expected, custom_parse_f64(&s));
             }
         }
+    }
+
+    #[test]
+    fn test_naive_line_by_line0() {
+        let content = create_content(&STATIONS, &TEMPERATURES);
+        let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
+        let mut idx: usize = 0;
+        naive_line_by_line0(
+            rdr,
+            |x, y| {
+                assert_eq!(STATIONS[idx].as_bytes(), x);
+                assert_eq!(TEMPERATURES[idx].as_bytes(), y);
+                idx += 1;
+            },
+            0,
+            (content.len() - 1) as u64,
+        );
+    }
+
+    #[test]
+    fn test_read_and_parse_large_chunks0() {
+        let content = create_content(&STATIONS, &TEMPERATURES);
+        let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
+        let mut idx: usize = 0;
+        parse_large_chunks0(
+            rdr,
+            |x, y| {
+                assert_eq!(STATIONS[idx].as_bytes(), x);
+                assert_eq!(TEMPERATURES[idx].as_bytes(), y);
+                idx += 1;
+            },
+            0,
+            (content.len() - 1) as u64,
+            106,
+        );
     }
 
     // #[test]

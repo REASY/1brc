@@ -1,6 +1,6 @@
 use brc_core::{
-    improved_impl_v1, improved_impl_v3, improved_impl_v3_dummy, improved_impl_v3_dummy_simd_search,
-    improved_impl_v4, naive_line_by_line, naive_line_by_line_dummy, sort_result, StateF64,
+    improved_impl_v3, improved_impl_v4, naive_line_by_line, naive_line_by_line_dummy,
+    naive_line_by_line_v2, parse_large_chunks_dummy, sort_result, StateF64,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -34,8 +34,8 @@ fn main() {
     let func: fn(BufReader<_>, u64, u64, bool) -> Vec<(String, StateF64)> = match method.as_str() {
         "naive_line_by_line_dummy" => naive_line_by_line_dummy,
         DEFAULT_IMPL => naive_line_by_line,
-        "improved_impl_v1" => improved_impl_v1,
-        "improved_impl_v3_dummy" => improved_impl_v3_dummy,
+        "naive_line_by_line_v2" => naive_line_by_line_v2,
+        "parse_large_chunks_dummy" => parse_large_chunks_dummy,
         // "improved_impl_v3_dummy_simd_search" => improved_impl_v3_dummy_simd_search,
         "improved_impl_v3" => improved_impl_v3,
         "improved_impl_v4" => improved_impl_v4,
