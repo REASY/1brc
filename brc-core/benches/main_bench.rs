@@ -75,11 +75,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         bytes.as_slice(),
         |b, bytes| b.iter(|| parse_large_chunks_simd_dummy_benchmark(bytes)),
     );
-    g.bench_with_input(
-        BenchmarkId::new("parse_large_chunks_v1", bytes.len()),
-        bytes.as_slice(),
-        |b, bytes| b.iter(|| parse_large_chunks_v1_benchmark(bytes)),
-    );
     g.finish();
 
     let mut g = c.benchmark_group("different implementation");
@@ -105,7 +100,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         bytes.as_slice(),
         |b, bytes| b.iter(|| parse_large_chunks_simd_benchmark(bytes)),
     );
-
+    g.bench_with_input(
+        BenchmarkId::new("parse_large_chunks_v1", bytes.len()),
+        bytes.as_slice(),
+        |b, bytes| b.iter(|| parse_large_chunks_v1_benchmark(bytes)),
+    );
     g.finish();
 }
 
