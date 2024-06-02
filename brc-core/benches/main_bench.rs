@@ -45,7 +45,7 @@ fn parse_large_chunks_v1_benchmark(bytes: &[u8]) {
     black_box(r);
 }
 
-const N: usize = 20;
+const N: usize = 10;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let bytes = {
@@ -111,7 +111,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
 criterion_group! {
   name = benches;
-  config = Criterion::default().measurement_time(Duration::from_secs(180)).warm_up_time(Duration::from_secs(10));
+  config = Criterion::default().measurement_time(Duration::from_secs(100)).warm_up_time(Duration::from_secs(10));
   targets = criterion_benchmark
 }
 criterion_main!(benches);
