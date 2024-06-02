@@ -3,7 +3,7 @@ resolver = "2"
 
 members = [
     "brc-core",
-    "app",
+    "brc-app",
 ]
 
 [profile.release]

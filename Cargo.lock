@@ -48,6 +48,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
+name = "brc-app"
+version = "0.1.0"
+dependencies = [
+ "brc-core",
+ "hashbrown",
+]
+
+[[package]]
 name = "brc-core"
 version = "0.1.0"
 dependencies = [
@@ -394,14 +402,6 @@ name = "regex-syntax"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adad44e29e4c806119491a7f06f03de4d1af22c3a680dd47f1e6e179439d1f56"
-
-[[package]]
-name = "rs"
-version = "0.1.0"
-dependencies = [
- "brc-core",
- "hashbrown",
-]
 
 [[package]]
 name = "rustc-hash"
