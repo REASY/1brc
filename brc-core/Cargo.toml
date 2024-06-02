@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 hashbrown = "0.14.5"
-memchr = "2.7.1"
+memchr = "2.7.2"
 rustc-hash = "1.1.0"
 
 [dev-dependencies]
@@ -15,5 +15,9 @@ criterion = "0.5"
 
 
 [[bench]]
-name = "benchmarks"
+name = "main_bench"
+harness = false
+
+[[bench]]
+name = "utils_bench"
 harness = false
