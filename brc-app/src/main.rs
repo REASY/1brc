@@ -1,7 +1,8 @@
 use brc_core::{
     naive_line_by_line, naive_line_by_line_dummy, naive_line_by_line_v2, parse_large_chunks,
     parse_large_chunks_dummy, parse_large_chunks_simd, parse_large_chunks_simd_dummy,
-    parse_large_chunks_v1, sort_result, StateF64,
+    parse_large_chunks_simd_v1, parse_large_chunks_v1, parse_large_chunks_v2, sort_result,
+    StateF64,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -38,9 +39,11 @@ fn main() {
         "naive_line_by_line_v2" => naive_line_by_line_v2,
         "parse_large_chunks_dummy" => parse_large_chunks_dummy,
         "parse_large_chunks" => parse_large_chunks,
+        "parse_large_chunks_v1" => parse_large_chunks_v1,
         "parse_large_chunks_simd_dummy" => parse_large_chunks_simd_dummy,
         "parse_large_chunks_simd" => parse_large_chunks_simd,
-        "parse_large_chunks_v1" => parse_large_chunks_v1,
+        "parse_large_chunks_simd_v1" => parse_large_chunks_simd_v1,
+        "parse_large_chunks_v2" => parse_large_chunks_v2,
         x => panic!("{}", x),
     };
 

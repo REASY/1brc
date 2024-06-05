@@ -1,5 +1,10 @@
-use rustc_hash::FxHashMap;
+mod station_name;
+mod table;
+
+use crate::table::Table;
+use rustc_hash::{FxHashMap, FxHasher};
 use std::fmt::Display;
+use std::hash::Hasher;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::str::FromStr;
 
@@ -45,7 +50,7 @@ impl StateF64 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StateI64 {
     min: i64,
     max: i64,
@@ -188,7 +193,7 @@ pub fn naive_line_by_line_dummy<R: Read + Seek>(
     vec![("dummy".to_string(), s)]
 }
 
-const DEFAULT_HASHMAP_CAPACITY: usize = 20000;
+const DEFAULT_HASHMAP_CAPACITY: usize = 1000;
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
@@ -625,7 +630,8 @@ fn parse_large_chunks0<R: Read + Seek, F>(
         let mut i: usize = 0;
         let mut next_name_idx = 0;
         while i < n {
-            if valid_buffer[i] == b';' {
+            let byte = valid_buffer[i];
+            if byte == b';' {
                 let mut j: usize = i + 1;
                 let start_measurement_idx: usize = j;
                 // The shortest temperature as string is "X.Y" that has length = 3
@@ -788,7 +794,7 @@ pub fn parse_large_chunks_simd_dummy<R: Read + Seek>(
         },
         start,
         end_inclusive,
-        64 * 1024 * 1024,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
 
     let mut s = StateF64::default();
@@ -861,20 +867,61 @@ impl<'a> Holder<'a> {
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
-/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI64`], [`hashbrown::HashMap`], could be slightly faster than [`parse_large_chunks_simd`] or [`parse_large_chunks`]
+/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI64`], [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks`] or [`parse_large_chunks`]
 pub fn parse_large_chunks_v1<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    let mut hs: hashbrown::HashMap<&[u8], StateI64> =
-        hashbrown::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
+    let mut hs: FxHashMap<&[u8], StateI64> =
+        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     let mut holder: Holder = {
         let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
         Holder::new(static_ref)
     };
+    parse_large_chunks0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let value = get_as_scaled_integer(measurement_bytes);
+            match hs.get_mut(station_name_bytes) {
+                None => {
+                    let s = StateI64::new(value as i64);
+                    let name = holder.store(station_name_bytes);
+                    hs.insert(name, s);
+                }
+                Some(prev) => prev.update(value as i64),
+            }
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
+    let mut all: Vec<(String, StateF64)> = hs
+        .into_iter()
+        .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
+        .collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
 
+/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+///
+/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI64`], [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks_simd`] or [`parse_large_chunks`]
+pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut hs: FxHashMap<&[u8], StateI64> =
+        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
+    let mut holder: Holder = {
+        let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
+        Holder::new(static_ref)
+    };
     parse_large_chunks_simd0(
         rdr,
         |station_name_bytes, measurement_bytes| {
@@ -896,6 +943,41 @@ pub fn parse_large_chunks_v1<R: Read + Seek>(
         .into_iter()
         .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
         .collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+pub fn parse_large_chunks_v2<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF64)> {
+    let mut holder: Holder = {
+        let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
+        Holder::new(static_ref)
+    };
+    const TABLE_SIZE: usize = 1000;
+    let mut table: Table<TABLE_SIZE, 3> = Table::new();
+
+    parse_large_chunks0(
+        rdr,
+        |station_name_bytes, measurement_bytes| {
+            let value = get_as_scaled_integer(measurement_bytes);
+            let hash = {
+                let mut hasher = FxHasher::default();
+                hasher.write(station_name_bytes);
+                hasher.finish()
+            };
+            table.insert_or_update(&mut holder, station_name_bytes, hash, value);
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
+    let mut all: Vec<(String, StateF64)> = table.to_result();
     if should_sort {
         sort_result(&mut all);
     }
