@@ -1,4 +1,7 @@
-use brc_core::{byte_to_string, byte_to_string_unsafe, custom_parse_f64, parse_f64};
+use brc_core::{
+    byte_to_string, byte_to_string_unsafe, get_as_scaled_integer, parse_f64,
+    to_scaled_integer_branchless,
+};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::time::Duration;
 
@@ -15,8 +18,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     g.bench_function("parse_f64", |b| b.iter(|| parse_f64(black_box("9.9"))));
 
-    g.bench_function("custom_parse_f64", |b| {
-        b.iter(|| custom_parse_f64(black_box("9.9")))
+    g.bench_function("get_as_scaled_integer", |b| {
+        b.iter(|| get_as_scaled_integer(black_box("-99.9".as_bytes())))
+    });
+
+    g.bench_function("to_scaled_integer_branchless", |b| {
+        b.iter(|| to_scaled_integer_branchless(black_box(0x65680A392E39392D)))
     });
 }
 

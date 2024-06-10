@@ -40,19 +40,17 @@ impl<'a, const MAX_SIZE: usize, const COLLISION_KEY_SIZE: usize>
         holder: &mut Holder<'a>,
         station_name_bytes: &[u8],
         hash: u64,
-        value: i32,
+        value: i16,
     ) {
         let table_idx = (hash as usize) % MAX_SIZE;
         // let s = byte_to_string_unsafe(station_name_bytes);
         match self.find_offset(table_idx, station_name_bytes) {
             Offset::Exists(offset) => {
-                self.inner[table_idx][offset as usize]
-                    .1
-                    .update(value as i64);
+                self.inner[table_idx][offset as usize].1.update(value);
             }
             Offset::ToInsert(offset) => {
                 let name = holder.store(station_name_bytes);
-                self.inner[table_idx][offset as usize] = (name, StateI64::new(value as i64));
+                self.inner[table_idx][offset as usize] = (name, StateI64::new(value));
                 // self.hs.insert(s.to_string());
             }
             Offset::Overflow => {
