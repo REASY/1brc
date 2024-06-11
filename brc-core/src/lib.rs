@@ -1221,6 +1221,18 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
                 hash = hash ^ (qw0 as u64);
             }
         }
+        // Process remaining
+        process_buffer_as_bytes(
+            &mut |station_name_bytes, v, hash| {
+                // Calculate hash the same way as above
+                table.insert_or_update(station_name_bytes, hash, v)
+            },
+            valid_buffer,
+            i,
+            n,
+            next_name_idx,
+            true,
+        );
 
         offset += valid_buffer.len();
     }
@@ -1306,7 +1318,7 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
             MASK[lc]
         }
         let n = valid_buffer.len();
-        let mut hash: u64 = 0x517cc1b727220a95;
+        let mut hash: u64 = INIT_HASH_VALUE;
         while i < n - 3 * BUF_SIZE {
             let qw0 = {
                 b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
@@ -1349,7 +1361,7 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
 
                 i = next_name_idx;
 
-                hash = 0x517cc1b727220a95
+                hash = INIT_HASH_VALUE
             } else {
                 hash = hash ^ (qw0 as u64);
                 hash = hash ^ (qw1 as u64);
@@ -1370,6 +1382,19 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
                 }
             }
         }
+
+        // Process remaining
+        process_buffer_as_bytes(
+            &mut |station_name_bytes, v, hash| {
+                // Calculate hash the same way as above
+                table.insert_or_update(station_name_bytes, hash, v)
+            },
+            valid_buffer,
+            i,
+            n,
+            next_name_idx,
+            true,
+        );
         offset += valid_buffer.len();
     }
     let mut all: Vec<(String, StateF)> = table.to_result();
