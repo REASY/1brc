@@ -180,8 +180,8 @@ pub fn naive_line_by_line_dummy<R: Read + Seek>(
     let mut dummy_result: usize = 0;
     naive_line_by_line0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
-            dummy_result += station_name_bytes.len() + measurement_bytes.len();
+        |name: &[u8], t: &[u8]| {
+            dummy_result += name.len() + t.len();
         },
         start,
         end_inclusive,
@@ -206,10 +206,10 @@ pub fn naive_line_by_line<R: Read + Seek>(
     let mut hs = std::collections::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     naive_line_by_line0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
+        |name: &[u8], t: &[u8]| {
             // Convert bytes to str
-            let station_name: &str = byte_to_string(station_name_bytes);
-            let measurement: &str = byte_to_string(measurement_bytes);
+            let station_name: &str = byte_to_string(name);
+            let measurement: &str = byte_to_string(t);
             // Parse measurement as f64
             let value = parse_f64(measurement);
             // Insert new state or update existing
@@ -279,9 +279,9 @@ pub fn naive_line_by_line_v2<R: Read + Seek>(
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     naive_line_by_line0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
-            let value = get_as_scaled_integer(measurement_bytes);
+        |name: &[u8], t: &[u8]| {
+            let station_name: &str = byte_to_string_unsafe(name);
+            let value = get_as_scaled_integer(t);
             match hs.get_mut(station_name) {
                 None => {
                     let mut s = StateI::new(value);
@@ -766,8 +766,8 @@ pub fn parse_large_chunks_as_bytes_dummy<R: Read + Seek>(
     let mut dummy_result: usize = 0;
     parse_large_chunks_as_bytes0(
         rdr,
-        |station_name_bytes, measurement_bytes, _| {
-            dummy_result += station_name_bytes.len() + measurement_bytes as usize;
+        |name: &[u8], t: i16, _| {
+            dummy_result += name.len() + t as usize;
         },
         start,
         end_inclusive,
@@ -792,11 +792,11 @@ pub fn parse_large_chunks_as_bytes<R: Read + Seek>(
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_as_bytes0(
         rdr,
-        |station_name_bytes, value, _| match hs.get_mut(station_name_bytes) {
+        |name: &[u8], t: i16, _| match hs.get_mut(name) {
             None => {
-                hs.insert(station_name_bytes.to_vec(), StateI::new(value));
+                hs.insert(name.to_vec(), StateI::new(t));
             }
-            Some(prev) => prev.update(value),
+            Some(prev) => prev.update(t),
         },
         start,
         end_inclusive,
@@ -821,8 +821,8 @@ pub fn parse_large_chunks_as_i64_dummy<R: Read + Seek>(
     let mut dummy_result: usize = 0;
     parse_large_chunks_as_i64_0(
         rdr,
-        |station_name_bytes, measurement_bytes, _| {
-            dummy_result += station_name_bytes.len() + measurement_bytes as usize;
+        |name: &[u8], t: i16, _| {
+            dummy_result += name.len() + t as usize;
         },
         start,
         end_inclusive,
@@ -848,11 +848,11 @@ pub fn parse_large_chunks_as_i64<R: Read + Seek>(
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_as_i64_0(
         rdr,
-        |station_name_bytes, value, _| match hs.get_mut(station_name_bytes) {
+        |name: &[u8], t: i16, _| match hs.get_mut(name) {
             None => {
-                hs.insert(station_name_bytes.to_vec(), StateI::new(value));
+                hs.insert(name.to_vec(), StateI::new(t));
             }
-            Some(prev) => prev.update(value),
+            Some(prev) => prev.update(t),
         },
         start,
         end_inclusive,
@@ -880,8 +880,8 @@ pub fn parse_large_chunks_as_i64_v2<R: Read + Seek>(
     let mut table: Table<TABLE_SIZE> = Table::new();
     parse_large_chunks_as_i64_0(
         rdr,
-        |station_name_bytes, value, hash| {
-            table.insert_or_update(station_name_bytes, hash, value);
+        |name: &[u8], t: i16, hash: u64| {
+            table.insert_or_update(name, hash, t);
         },
         start,
         end_inclusive,
@@ -903,13 +903,13 @@ pub fn parse_large_chunks_as_i64_mm(
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
 
     process_buffer_as_i64_unsafe(
-        &mut |station_name_bytes, value, _| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
+        &mut |name: &[u8], t: i16, _| {
+            let station_name: &str = byte_to_string_unsafe(name);
             match hs.get_mut(station_name) {
                 None => {
-                    hs.insert(station_name.to_string(), StateI::new(value));
+                    hs.insert(station_name.to_string(), StateI::new(t));
                 }
-                Some(prev) => prev.update(value),
+                Some(prev) => prev.update(t),
             }
         },
         valid_buffer,
@@ -935,11 +935,11 @@ pub fn parse_large_chunks_as_i64_unsafe<R: Read + Seek>(
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_as_i64_unsafe_0(
         rdr,
-        |station_name_bytes, value, _| match hs.get_mut(station_name_bytes) {
+        |name: &[u8], t: i16, _| match hs.get_mut(name) {
             None => {
-                hs.insert(station_name_bytes.to_vec(), StateI::new(value));
+                hs.insert(name.to_vec(), StateI::new(t));
             }
-            Some(prev) => prev.update(value),
+            Some(prev) => prev.update(t),
         },
         start,
         end_inclusive,
@@ -1042,8 +1042,8 @@ pub fn parse_large_chunks_simd_dummy<R: Read + Seek>(
     let mut dummy_result: usize = 0;
     parse_large_chunks_simd0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
-            dummy_result += station_name_bytes.len() + measurement_bytes.len();
+        |name: &[u8], t: &[u8]| {
+            dummy_result += name.len() + t.len();
         },
         start,
         end_inclusive,
@@ -1068,13 +1068,13 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_simd0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
-            let value = get_as_scaled_integer(measurement_bytes);
-            match hs.get_mut(station_name_bytes) {
+        |name: &[u8], t: &[u8]| {
+            let value = get_as_scaled_integer(t);
+            match hs.get_mut(name) {
                 None => {
                     let mut s = StateI::new(value);
                     s.update(value);
-                    hs.insert(station_name_bytes.to_vec(), s);
+                    hs.insert(name.to_vec(), s);
                 }
                 Some(prev) => prev.update(value),
             }
@@ -1136,12 +1136,12 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
     };
     parse_large_chunks_simd0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
-            let value = get_as_scaled_integer(measurement_bytes);
-            match hs.get_mut(station_name_bytes) {
+        |name: &[u8], t: &[u8]| {
+            let value = get_as_scaled_integer(t);
+            match hs.get_mut(name) {
                 None => {
                     let s = StateI::new(value);
-                    let name = holder.store(station_name_bytes);
+                    let name = holder.store(name);
                     hs.insert(name, s);
                 }
                 Some(prev) => prev.update(value),
@@ -1199,8 +1199,8 @@ pub fn parse_large_chunks_as_i64_as_java<R: Read + Seek>(
 
     parse_large_chunks_as_i64_as_java0(
         rdr,
-        |station_name_bytes, value, hash| {
-            table.insert_or_update(station_name_bytes, hash, value);
+        |name: &[u8], t: i16, hash: u64| {
+            table.insert_or_update(name, hash, t);
         },
         start,
         end_inclusive,
@@ -1436,11 +1436,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_large_chunks_as_i64_unsafe() {
+    fn test_parse_large_chunks_as_i64_as_java0() {
         let content = create_content(&STATIONS, &TEMPERATURES);
         let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
         let mut idx: usize = 0;
-        process_buffer_as_i64_as_java0(
+        parse_large_chunks_as_i64_as_java0(
             rdr,
             |x, y, _hash| {
                 let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
