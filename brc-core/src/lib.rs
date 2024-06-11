@@ -170,7 +170,7 @@ fn naive_line_by_line0<R: Read + Seek, F>(
 
 /// Reads from provided buffered reader station name and temperature and simply accumulates some dummy value.
 ///
-/// This method helps us to understand what is the maximum possible throughput in case of running very simple operation on found values.
+/// This method helps us to understand what is the maximum possible throughput in case of running very simple operation on parsed data.
 pub fn naive_line_by_line_dummy<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
