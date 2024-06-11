@@ -157,12 +157,12 @@ fn naive_line_by_line0<R: Read + Seek, F>(
         while idx < s.len() && slice[idx] != b';' {
             idx += 1
         }
-        let station_name_bytes = &slice[0..idx];
+        let name = &slice[0..idx];
         // The remaining bytes are for temperature
         // We need to subtract 1 from read_bytes because `read_line` includes delimiter as well
-        let measurement_bytes = &slice[idx + 1..read_bytes - 1];
+        let value = &slice[idx + 1..read_bytes - 1];
         // Call processor to handle the temperature for the station
-        processor(station_name_bytes, measurement_bytes);
+        processor(name, value);
         // Clear the buffer to make sure next read won't have data from previous read
         s.clear();
     }
@@ -411,16 +411,16 @@ fn process_buffer_as_bytes<F>(
             if valid_buffer[j] != b'\n' {
                 j += 1;
             }
-            let station_name_bytes = &valid_buffer[next_name_idx..i];
-            let measurement_bytes = &valid_buffer[start_measurement_idx..j];
-            let v = get_as_scaled_integer(measurement_bytes);
+            let name = &valid_buffer[next_name_idx..i];
+            let value = &valid_buffer[start_measurement_idx..j];
+            let v = get_as_scaled_integer(value);
             let hash = if should_calculate_hash {
-                calculate_hash(&station_name_bytes)
+                calculate_hash(&name)
             } else {
                 0
             };
             // Call processor to handle the temperature for the station
-            processor(station_name_bytes, v, hash);
+            processor(name, v, hash);
 
             // Assign next name index
             if j < n - 1 {
@@ -459,7 +459,7 @@ where
             }
 
             let end_exclusive = i + sp0 as usize;
-            let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
+            let name = &valid_buffer[next_name_idx..end_exclusive];
 
             let start_measurement_idx: usize = end_exclusive + 1;
             b0.copy_from_slice(
@@ -469,7 +469,7 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(station_name_bytes, v, hash);
+            processor(name, v, hash);
 
             hash = 0;
             if should_calculate_hash {
@@ -546,7 +546,7 @@ where
             // println!("i: {i}, qw0: {qw0:#08X}, m0: {m0:#08X}, qw1: {qw1:#08X}, m1: {m1:#08X}, total_offset: {total_offset}");
 
             let end_exclusive = i + total_offset as usize;
-            let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
+            let name = &valid_buffer[next_name_idx..end_exclusive];
 
             let start_measurement_idx: usize = end_exclusive + 1;
             b0.copy_from_slice(
@@ -556,7 +556,7 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(station_name_bytes, v, 0);
+            processor(name, v, 0);
 
             i = next_name_idx;
         } else {
@@ -595,7 +595,7 @@ where
         // println!("i: {i}, qw0: {qw0:#08X}, sp0: {sp0}");
         if sp0 != 8 {
             let end_exclusive = i + sp0 as usize;
-            let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
+            let name = &valid_buffer[next_name_idx..end_exclusive];
             ptr = unsafe { ptr.add((sp0 + 1) as usize) };
             // println!("ptr: {ptr:?}");
 
@@ -605,7 +605,7 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(station_name_bytes, v, 0);
+            processor(name, v, 0);
 
             ptr = unsafe { ptr.add(len as usize) };
 
@@ -1000,13 +1000,13 @@ fn parse_large_chunks_simd0<R: Read + Seek, F>(
         };
         let mut next_name_idx = 0;
         for it in memchr::memchr_iter(b';', &valid_buffer) {
-            let station_name_bytes = &valid_buffer[next_name_idx..it];
+            let name = &valid_buffer[next_name_idx..it];
 
             let inner_buf = &valid_buffer[it + 1..];
             let idx = memchr::memchr(b'\n', &inner_buf).unwrap();
-            let measurement_bytes = &inner_buf[..idx];
+            let value = &inner_buf[..idx];
             // Call processor to handle the temperature for the station
-            processor(station_name_bytes, measurement_bytes);
+            processor(name, value);
 
             next_name_idx = it + 1 + idx + 1;
         }
@@ -1162,10 +1162,10 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
 }
 
 #[inline]
-fn calculate_hash(station_name_bytes: &&[u8]) -> u64 {
+fn calculate_hash(name: &&[u8]) -> u64 {
     const BUF_SIZE: usize = std::mem::size_of::<i64>();
     let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
-    let chunks = station_name_bytes.chunks(8);
+    let chunks = name.chunks(8);
     let mut hash: u64 = INIT_HASH_VALUE;
 
     for c in chunks {
