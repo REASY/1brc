@@ -1356,7 +1356,7 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
 
                 i += 16;
 
-                while i < n {
+                while i < n - BUF_SIZE {
                     let qw0 = {
                         b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
                         i64::from_le_bytes(b0)
