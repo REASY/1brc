@@ -397,6 +397,7 @@ pub const fn to_scaled_integer_branchless(value: i64) -> (i16, i16) {
 
 const fn get_whole_word(qw: u64, semicolon_pos: usize) -> u64 {
     const MASK: [u64; 9] = [
+        0x00,
         0xFF,
         0xFFFF,
         0xFFFFFF,
@@ -404,7 +405,6 @@ const fn get_whole_word(qw: u64, semicolon_pos: usize) -> u64 {
         0xFFFFFFFFFF,
         0xFFFFFFFFFFFF,
         0xFFFFFFFFFFFFFF,
-        0xFFFFFFFFFFFFFFFF,
         0xFFFFFFFFFFFFFFFF,
     ];
     let mask_value = MASK[semicolon_pos];
@@ -463,7 +463,7 @@ where
     let mut i: usize = 0;
     let mut next_name_idx = 0;
     let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
-    while i < n - 16 {
+    while i < n - (BUF_SIZE + MAX_MEASUREMENT_LEN) {
         b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
         let qw0 = i64::from_le_bytes(b0);
         let sp0 = get_semicolon_pos(qw0);
@@ -765,6 +765,8 @@ fn parse_large_chunks_as_bytes0<R: Read + Seek, F>(
         offset += valid_buffer.len();
     }
 }
+
+const MAX_MEASUREMENT_LEN: usize = "-99.9\n".len();
 
 fn parse_large_chunks_as_i64_0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
@@ -1282,7 +1284,9 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
     end_inclusive: u64,
     should_sort: bool,
 ) -> Vec<(String, StateF64)> {
-    const TABLE_SIZE: usize = 10000;
+    const TABLE_SIZE: usize = 13337;
+    const INIT_HASH_VALUE: u64 = 0x517cc1b727220a95;
+
     let mut table: Table<TABLE_SIZE> = Table::new();
 
     let end_incl_usize = end_inclusive as usize;
@@ -1309,17 +1313,16 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
         let mut i: usize = 0;
         let mut next_name_idx = 0;
         let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
-        let mut hash: u64 = 0x517cc1b727220a95;
-        while i < n - 16 {
+        let mut hash: u64 = INIT_HASH_VALUE;
+        while i < n - (BUF_SIZE + MAX_MEASUREMENT_LEN) {
             b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
             let qw0 = i64::from_le_bytes(b0);
             let sp0 = get_semicolon_pos(qw0);
-            // println!("i: {i}, qw0: {qw0:#08X}, sp0: {sp0}");
+            // println!("i: {i}, qw0: {qw0:#08X}, sp0: {sp0}, buf: {:?}", &valid_buffer[i..i + BUF_SIZE]);
 
             if sp0 != 8 {
                 let end_exclusive = i + sp0 as usize;
                 let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
-
                 let word = get_whole_word(qw0 as u64, sp0 as usize);
                 hash = hash ^ word;
 
@@ -1335,12 +1338,43 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
 
                 i = next_name_idx;
 
-                hash = 0x517cc1b727220a95
+                hash = INIT_HASH_VALUE
             } else {
                 i += 8;
                 hash = hash ^ (qw0 as u64);
             }
         }
+
+        process_buffer_as_bytes(
+            &mut |station_name_bytes, v| {
+                let chunks = station_name_bytes.chunks(8);
+                hash = INIT_HASH_VALUE;
+
+                for c in chunks {
+                    if c.len() == 8 {
+                        b0.copy_from_slice(c);
+                    } else {
+                        let mut i: usize = 0;
+                        while (i < c.len()) {
+                            b0[i] = c[i];
+                            i += 1;
+                        }
+                        while (i < 8) {
+                            b0[i] = 0;
+                            i += 1;
+                        }
+                    }
+                    let qw0 = i64::from_le_bytes(b0);
+                    hash = hash ^ (qw0 as u64);
+                }
+                table.insert_or_update(station_name_bytes, hash, v)
+            },
+            valid_buffer,
+            i,
+            n,
+            next_name_idx,
+        );
+
         offset += valid_buffer.len();
     }
     let mut all: Vec<(String, StateF64)> = table.to_result();

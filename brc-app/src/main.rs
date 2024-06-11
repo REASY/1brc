@@ -68,6 +68,7 @@ fn main() {
                 let end_inclusive = *e as u64;
                 let path = path.clone();
                 thread::Builder::new()
+                    .stack_size(10 * 1024 * 1024)
                     .spawn(move || {
                         let rdr = BufReader::with_capacity(
                             BUF_READER_CAPACITY,
