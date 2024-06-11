@@ -4,9 +4,9 @@
 use brc_core::{
     naive_line_by_line, naive_line_by_line_dummy, naive_line_by_line_v2,
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_as_i64,
-    parse_large_chunks_as_i64_dummy, parse_large_chunks_as_i64_unsafe,
-    parse_large_chunks_as_i64_v2, parse_large_chunks_simd, parse_large_chunks_simd_dummy,
-    parse_large_chunks_simd_v1, parse_large_chunks_v2, parse_large_chunks_v3, sort_result, StateF,
+    parse_large_chunks_as_i64_as_java, parse_large_chunks_as_i64_dummy,
+    parse_large_chunks_as_i64_unsafe, parse_large_chunks_as_i64_v2, parse_large_chunks_simd,
+    parse_large_chunks_simd_dummy, parse_large_chunks_simd_v1, sort_result, StateF,
     DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
 };
 use std::fs::File;
@@ -48,11 +48,10 @@ fn main() {
         "parse_large_chunks_as_i64" => parse_large_chunks_as_i64,
         "parse_large_chunks_as_i64_v2" => parse_large_chunks_as_i64_v2,
         "parse_large_chunks_as_i64_unsafe" => parse_large_chunks_as_i64_unsafe,
+        "parse_large_chunks_as_i64_as_java" => parse_large_chunks_as_i64_as_java,
         "parse_large_chunks_simd_dummy" => parse_large_chunks_simd_dummy,
         "parse_large_chunks_simd" => parse_large_chunks_simd,
         "parse_large_chunks_simd_v1" => parse_large_chunks_simd_v1,
-        "parse_large_chunks_v2" => parse_large_chunks_v2,
-        "parse_large_chunks_v3" => parse_large_chunks_v3,
         x => panic!("{}", x),
     };
 

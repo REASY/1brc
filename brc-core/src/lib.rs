@@ -495,8 +495,7 @@ where
 }
 
 #[inline]
-#[allow(unused)]
-fn process_buffer_as_i64_as_java<F>(processor: &mut F, valid_buffer: &[u8])
+fn process_buffer_as_i64_as_java0<F>(processor: &mut F, valid_buffer: &[u8])
 where
     F: FnMut(&[u8], i16, u64),
 {
@@ -507,6 +506,7 @@ where
     let mut next_name_idx = 0;
     let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
 
+    #[inline]
     const fn get_mask(lc: usize) -> u64 {
         const MASK: [u64; 9] = [
             0x00,
@@ -561,8 +561,7 @@ where
             i = next_name_idx;
         } else {
             i += 16;
-
-            while i < n {
+            while i < n - BUF_SIZE {
                 let qw0 = {
                     b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
                     i64::from_le_bytes(b0)
@@ -575,29 +574,6 @@ where
                 }
             }
         }
-
-        // println!("i: {i}, qw0: {qw0:#08X}, sp0: {sp0}, qw1: {qw1:#08X}, sp1: {sp1}");
-
-        // println!("i: {i}, qw0: {qw0:#08X}, sp0: {sp0}");
-
-        // if sp0 != 8 {
-        //     let end_exclusive = i + sp0 as usize;
-        //     let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
-        //
-        //     let start_measurement_idx: usize = end_exclusive + 1;
-        //     b0.copy_from_slice(
-        //         &valid_buffer[start_measurement_idx..start_measurement_idx + BUF_SIZE],
-        //     );
-        //     let qw1 = i64::from_le_bytes(b0);
-        //     let (v, len) = to_scaled_integer_branchless(qw1);
-        //
-        //     next_name_idx = start_measurement_idx + len as usize;
-        //     processor(station_name_bytes, v);
-        //
-        //     i = next_name_idx;
-        // } else {
-        //     i += 8;
-        // }
     }
     // Handle remaining
     process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx, false);
@@ -648,7 +624,7 @@ pub const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 128 * 1024 * 1024;
 /// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
 ///
 /// This is around 3 times faster than [`naive_line_by_line`] at raw parsing speed.
-#[inline(always)]
+#[inline]
 fn parse_large_chunks_as_bytes0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
     mut processor: F,
@@ -747,6 +723,36 @@ fn parse_large_chunks_as_i64_unsafe_0<R: Read + Seek, F>(
         }
         let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
         process_buffer_as_i64_unsafe(&mut processor, valid_buffer);
+        offset += valid_buffer.len();
+    }
+}
+
+fn parse_large_chunks_as_i64_as_java0<R: Read + Seek, F>(
+    mut rdr: BufReader<R>,
+    mut processor: F,
+    start: u64,
+    end_inclusive: u64,
+    buffer_size: usize,
+) where
+    F: FnMut(&[u8], i16, u64),
+{
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset: usize = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut vec: Vec<u8> = vec![0; buffer_size];
+    let mut buf = vec.as_mut_slice();
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
+        }
+        let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
+        process_buffer_as_i64_as_java0(&mut processor, valid_buffer);
         offset += valid_buffer.len();
     }
 }
@@ -1155,94 +1161,6 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
     all
 }
 
-pub fn parse_large_chunks_v2<R: Read + Seek>(
-    mut rdr: BufReader<R>,
-    start: u64,
-    end_inclusive: u64,
-    should_sort: bool,
-) -> Vec<(String, StateF)> {
-    const TABLE_SIZE: usize = 10000;
-
-    let mut table: Table<TABLE_SIZE> = Table::new();
-
-    let end_incl_usize = end_inclusive as usize;
-    let mut offset: usize = start as usize;
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    let mut vec: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER];
-    let mut buf = vec.as_mut_slice();
-    while offset <= end_incl_usize {
-        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
-        if read_bytes == 0 {
-            break;
-        }
-        let remaining = end_incl_usize - offset + 1;
-        if remaining < buf.len() {
-            read_bytes = remaining;
-        }
-
-        let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
-
-        const BUF_SIZE: usize = std::mem::size_of::<i64>();
-
-        let n = valid_buffer.len();
-        let mut i: usize = 0;
-        let mut next_name_idx = 0;
-        let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
-        let mut hash: u64 = INIT_HASH_VALUE;
-        while i < n - (BUF_SIZE + MAX_MEASUREMENT_LEN) {
-            b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
-            let qw0 = i64::from_le_bytes(b0);
-            let sp0 = get_semicolon_pos(qw0);
-            // println!("i: {i}, qw0: {qw0:#08X}, sp0: {sp0}, buf: {:?}", &valid_buffer[i..i + BUF_SIZE]);
-
-            if sp0 != 8 {
-                let end_exclusive = i + sp0 as usize;
-                let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
-                let word = get_whole_word(qw0 as u64, sp0 as usize);
-                hash = hash ^ word;
-
-                let start_measurement_idx: usize = end_exclusive + 1;
-                b0.copy_from_slice(
-                    &valid_buffer[start_measurement_idx..start_measurement_idx + BUF_SIZE],
-                );
-                let qw1 = i64::from_le_bytes(b0);
-                let (v, len) = to_scaled_integer_branchless(qw1);
-
-                next_name_idx = start_measurement_idx + len as usize;
-
-                table.insert_or_update(station_name_bytes, hash, v);
-
-                i = next_name_idx;
-
-                hash = INIT_HASH_VALUE
-            } else {
-                i += 8;
-                hash = hash ^ (qw0 as u64);
-            }
-        }
-        // Process remaining
-        process_buffer_as_bytes(
-            &mut |station_name_bytes, v, hash| {
-                // Calculate hash the same way as above
-                table.insert_or_update(station_name_bytes, hash, v)
-            },
-            valid_buffer,
-            i,
-            n,
-            next_name_idx,
-            true,
-        );
-
-        offset += valid_buffer.len();
-    }
-    let mut all: Vec<(String, StateF)> = table.to_result();
-    if should_sort {
-        sort_result(&mut all);
-    }
-    all
-}
-
 #[inline]
 fn calculate_hash(station_name_bytes: &&[u8]) -> u64 {
     const BUF_SIZE: usize = std::mem::size_of::<i64>();
@@ -1270,8 +1188,8 @@ fn calculate_hash(station_name_bytes: &&[u8]) -> u64 {
     hash
 }
 
-pub fn parse_large_chunks_v3<R: Read + Seek>(
-    mut rdr: BufReader<R>,
+pub fn parse_large_chunks_as_i64_as_java<R: Read + Seek>(
+    rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
@@ -1279,124 +1197,15 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
     const TABLE_SIZE: usize = 10000;
     let mut table: Table<TABLE_SIZE> = Table::new();
 
-    let end_incl_usize = end_inclusive as usize;
-    let mut offset: usize = start as usize;
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    let mut vec: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER];
-    let mut buf = vec.as_mut_slice();
-    while offset <= end_incl_usize {
-        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
-        if read_bytes == 0 {
-            break;
-        }
-        let remaining = end_incl_usize - offset + 1;
-        if remaining < buf.len() {
-            read_bytes = remaining;
-        }
-
-        let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
-
-        const BUF_SIZE: usize = std::mem::size_of::<i64>();
-
-        let mut i: usize = 0;
-        let mut next_name_idx = 0;
-        let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
-
-        const fn get_mask(lc: usize) -> u64 {
-            const MASK: [u64; 9] = [
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0x00,
-                0xFFFFFFFFFFFFFFFF,
-            ];
-            MASK[lc]
-        }
-        let n = valid_buffer.len();
-        let mut hash: u64 = INIT_HASH_VALUE;
-        while i < n - 3 * BUF_SIZE {
-            let qw0 = {
-                b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
-                i64::from_le_bytes(b0)
-            };
-            let m0 = get_semicolon_mask(qw0);
-
-            let qw1 = {
-                b0.copy_from_slice(&valid_buffer[i + BUF_SIZE..i + 2 * BUF_SIZE]);
-                i64::from_le_bytes(b0)
-            };
-            let m1 = get_semicolon_mask(qw1);
-
-            // https://github.com/gunnarmorling/1brc/blob/main/src/main/java/dev/morling/onebrc/CalculateAverage_thomaswue.java#L201
-            if (m0 | m1) != 0 {
-                let letter_count1 = i64::trailing_zeros(m0) >> 3; // value between 1 and 8
-                let letter_count2 = i64::trailing_zeros(m1) >> 3; // value between 0 and 8
-
-                let len_mask = get_mask(letter_count1 as usize);
-
-                let total_offset = letter_count1 as u64 + (letter_count2 as u64 & len_mask);
-
-                let word = get_whole_word(qw0 as u64, letter_count1 as usize);
-                hash = hash ^ word;
-
-                // println!("i: {i}, qw0: {qw0:#08X}, m0: {m0:#08X}, qw1: {qw1:#08X}, m1: {m1:#08X}, total_offset: {total_offset}");
-
-                let end_exclusive = i + total_offset as usize;
-                let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
-
-                let start_measurement_idx: usize = end_exclusive + 1;
-                b0.copy_from_slice(
-                    &valid_buffer[start_measurement_idx..start_measurement_idx + BUF_SIZE],
-                );
-                let qw1 = i64::from_le_bytes(b0);
-                let (v, len) = to_scaled_integer_branchless(qw1);
-
-                next_name_idx = start_measurement_idx + len as usize;
-                table.insert_or_update(station_name_bytes, hash, v);
-
-                i = next_name_idx;
-
-                hash = INIT_HASH_VALUE
-            } else {
-                hash = hash ^ (qw0 as u64);
-                hash = hash ^ (qw1 as u64);
-
-                i += 16;
-
-                while i < n - BUF_SIZE {
-                    let qw0 = {
-                        b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
-                        i64::from_le_bytes(b0)
-                    };
-                    let m0 = get_semicolon_mask(qw0);
-                    if m0 != 0 {
-                        break;
-                    } else {
-                        i += 8;
-                    }
-                }
-            }
-        }
-
-        // Process remaining
-        process_buffer_as_bytes(
-            &mut |station_name_bytes, v, hash| {
-                // Calculate hash the same way as above
-                table.insert_or_update(station_name_bytes, hash, v)
-            },
-            valid_buffer,
-            i,
-            n,
-            next_name_idx,
-            true,
-        );
-        offset += valid_buffer.len();
-    }
+    parse_large_chunks_as_i64_as_java0(
+        rdr,
+        |station_name_bytes, value, hash| {
+            table.insert_or_update(station_name_bytes, hash, value);
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
     let mut all: Vec<(String, StateF)> = table.to_result();
     if should_sort {
         sort_result(&mut all);
@@ -1610,6 +1419,28 @@ mod tests {
         let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
         let mut idx: usize = 0;
         parse_large_chunks_as_i64_unsafe_0(
+            rdr,
+            |x, y, _hash| {
+                let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
+                let s = STATIONS[idx];
+                let str_x = byte_to_string(x);
+                println!("Expected: {s}");
+                assert_eq!(s.as_bytes(), x, "idx: {idx}, s: {s}, str_x: {str_x}");
+                assert_eq!(expected_v, y, "idx: {idx}");
+                idx += 1;
+            },
+            0,
+            (content.len() - 1) as u64,
+            106,
+        );
+    }
+
+    #[test]
+    fn test_parse_large_chunks_as_i64_unsafe() {
+        let content = create_content(&STATIONS, &TEMPERATURES);
+        let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
+        let mut idx: usize = 0;
+        process_buffer_as_i64_as_java0(
             rdr,
             |x, y, _hash| {
                 let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
