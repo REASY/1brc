@@ -521,7 +521,7 @@ where
         ];
         MASK[lc]
     }
-
+    let mut hash: u64 = INIT_HASH_VALUE;
     while i < n - 3 * BUF_SIZE {
         let qw0 = {
             b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
@@ -540,6 +540,8 @@ where
             let letter_count1 = i64::trailing_zeros(m0) >> 3; // value between 1 and 8
             let letter_count2 = i64::trailing_zeros(m1) >> 3; // value between 0 and 8
 
+            hash = hash ^ get_whole_word(qw0 as u64, letter_count1 as usize);
+
             let len_mask = get_mask(letter_count1 as usize);
 
             let total_offset = letter_count1 as u64 + (letter_count2 as u64 & len_mask);
@@ -556,11 +558,16 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(name, v, 0);
+            processor(name, v, hash);
 
             i = next_name_idx;
+
+            hash = INIT_HASH_VALUE;
         } else {
             i += 16;
+            hash = hash ^ (qw0 as u64);
+            hash = hash ^ (qw1 as u64);
+
             while i < n - BUF_SIZE {
                 let qw0 = {
                     b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
