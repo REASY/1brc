@@ -141,7 +141,7 @@ fn naive_line_by_line0<R: Read + Seek, F>(
     // Input value ranges are as follows:
     // Station name: non null UTF-8 string of min length 1 character and max length 100 bytes (i.e. this could be 100 one-byte characters, or 50 two-byte characters, etc.)
     // Temperature value: non null double between -99.9 (inclusive) and 99.9 (inclusive), always with one fractional digit
-    const MAX_LINE_LENGTH_IN_BYTES: usize = 108; // We actually need 100 + 1 (';') + 5 ("-99.9") = 106
+    const MAX_LINE_LENGTH_IN_BYTES: usize = 108; // We actually need 100 + 1 (';') + 5 ("-99.9") + 1 ('\n') = 107
 
     let mut s: String = String::with_capacity(MAX_LINE_LENGTH_IN_BYTES);
     while offset <= end_inclusive as usize {
