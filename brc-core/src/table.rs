@@ -46,7 +46,7 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
 
     #[inline]
     pub fn insert_or_update(&mut self, station_name_bytes: &[u8], hash: u64, value: i16) {
-        let mut slot = self.find_slot(hash, station_name_bytes);
+        let slot = self.find_slot(hash, station_name_bytes);
         if slot.is_none() {
             let _ = std::mem::replace(
                 slot,
@@ -120,7 +120,7 @@ impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
             let new = Some(byte_to_string_unsafe(key).to_string());
             let _ = std::mem::replace(slot, new);
         } else {
-            let mut state: &mut StateI64 = &mut self.values[slot_idx];
+            let state: &mut StateI64 = &mut self.values[slot_idx];
             state.update(value)
         }
     }

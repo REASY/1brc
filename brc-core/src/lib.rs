@@ -2,13 +2,10 @@ mod station_name;
 mod table;
 
 use crate::table::Table;
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::FxHashMap;
 use std::fmt::Display;
-use std::hash::Hasher;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::mem::size_of_val;
 use std::str::FromStr;
-use std::time::Instant;
 
 #[derive(Debug)]
 pub struct StateF64 {
@@ -557,7 +554,7 @@ where
         } else {
             i += 16;
 
-            while (i < n) {
+            while i < n {
                 let qw0 = {
                     b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
                     i64::from_le_bytes(b0)
@@ -1355,11 +1352,11 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
                         b0.copy_from_slice(c);
                     } else {
                         let mut i: usize = 0;
-                        while (i < c.len()) {
+                        while i < c.len() {
                             b0[i] = c[i];
                             i += 1;
                         }
-                        while (i < 8) {
+                        while i < 8 {
                             b0[i] = 0;
                             i += 1;
                         }
@@ -1482,7 +1479,7 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
 
                 i += 16;
 
-                while (i < n) {
+                while i < n {
                     let qw0 = {
                         b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
                         i64::from_le_bytes(b0)
