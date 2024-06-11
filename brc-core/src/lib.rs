@@ -495,6 +495,7 @@ where
 }
 
 #[inline]
+#[allow(unused)]
 fn process_buffer_as_i64_as_java<F>(processor: &mut F, valid_buffer: &[u8])
 where
     F: FnMut(&[u8], i16, u64),
@@ -642,7 +643,7 @@ where
     process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx, false);
 }
 
-const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 128 * 1024 * 1024;
+pub const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 128 * 1024 * 1024;
 
 /// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
 ///
@@ -744,9 +745,7 @@ fn parse_large_chunks_as_i64_unsafe_0<R: Read + Seek, F>(
         if remaining < buf.len() {
             read_bytes = remaining;
         }
-
         let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
-        // println!("Read {read_bytes}, valid_buffer: {}", valid_buffer.len());
         process_buffer_as_i64_unsafe(&mut processor, valid_buffer);
         offset += valid_buffer.len();
     }
@@ -1005,6 +1004,25 @@ fn parse_large_chunks_simd0<R: Read + Seek, F>(
 
             next_name_idx = it + 1 + idx + 1;
         }
+        // Tried `memchr::Memchr2` as well, however it is slower, leaving commented code below
+        // let mut next_name_idx = 0;
+        // let mut next_measurement_idx = 0;
+        // let mut station_name_bytes: &[u8] = &[];
+        //
+        // let mut j: usize = 0;
+        // for i in memchr::Memchr2::new(b';', b'\n', valid_buffer) {
+        //     if j % 2 == 0 {
+        //         station_name_bytes = &valid_buffer[next_name_idx..i];
+        //         next_measurement_idx = i + 1;
+        //     }
+        //     else {
+        //         next_name_idx = i + 1;
+        //         let measurement_bytes = &valid_buffer[next_measurement_idx..i];
+        //         processor(station_name_bytes, measurement_bytes);
+        //     }
+        //     j += 1;
+        // }
+
         offset += valid_buffer.len();
     }
 }
@@ -1093,85 +1111,6 @@ impl<'a> Holder<'a> {
 
         Holder { values }
     }
-}
-
-pub fn parse_large_chunks_v1<R: Read + Seek>(
-    mut rdr: BufReader<R>,
-    start: u64,
-    end_inclusive: u64,
-    should_sort: bool,
-) -> Vec<(String, StateF)> {
-    let mut hs: FxHashMap<&[u8], StateI> =
-        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
-    let mut holder: Holder = {
-        let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
-        Holder::new(static_ref)
-    };
-
-    let end_incl_usize = end_inclusive as usize;
-    let mut offset: usize = start as usize;
-    rdr.seek(SeekFrom::Start(start)).unwrap();
-
-    let mut vec: Vec<u8> = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER];
-    let mut buf = vec.as_mut_slice();
-    while offset <= end_incl_usize {
-        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
-        if read_bytes == 0 {
-            break;
-        }
-        let remaining = end_incl_usize - offset + 1;
-        if remaining < buf.len() {
-            read_bytes = remaining;
-        }
-
-        let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
-        let n = valid_buffer.len();
-
-        let mut i: usize = 0;
-        let mut next_name_idx = 0;
-        while i < n {
-            let byte = valid_buffer[i];
-            if byte == b';' {
-                let mut j: usize = i + 1;
-                let start_measurement_idx: usize = j;
-                // The shortest temperature as string is "X.Y" that has length = 3
-                j += 3;
-                // Check remaining 2 bytes that could be because of number like "-XY.Z"
-                if valid_buffer[j] != b'\n' {
-                    j += 1;
-                }
-                if valid_buffer[j] != b'\n' {
-                    j += 1;
-                }
-                let station_name_bytes = &valid_buffer[next_name_idx..i];
-                let v = get_as_scaled_integer(&valid_buffer[start_measurement_idx..j]);
-                match hs.get_mut(station_name_bytes) {
-                    None => {
-                        let name = holder.store(station_name_bytes);
-                        hs.insert(name, StateI::new(v));
-                    }
-                    Some(prev) => prev.update(v),
-                }
-                // Assign next name index
-                if j < n - 1 {
-                    next_name_idx = j + 1;
-                }
-
-                i = j;
-            }
-            i += 1;
-        }
-
-        offset += n;
-    }
-    let mut all: Vec<(String, StateF)> = hs
-        .into_iter()
-        .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
-        .collect();
-    if should_sort {
-        sort_result(&mut all);
-    }
-    all
 }
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
@@ -1282,18 +1221,6 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
                 hash = hash ^ (qw0 as u64);
             }
         }
-        // Process remaining
-        process_buffer_as_bytes(
-            &mut |station_name_bytes, v, hash| {
-                // Calculate hash the same way as above
-                table.insert_or_update(station_name_bytes, hash, v)
-            },
-            valid_buffer,
-            i,
-            n,
-            next_name_idx,
-            true,
-        );
 
         offset += valid_buffer.len();
     }
@@ -1614,7 +1541,7 @@ mod tests {
         let mut idx: usize = 0;
         parse_large_chunks_as_bytes0(
             rdr,
-            |x, y| {
+            |x, y, _hash| {
                 let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
@@ -1636,7 +1563,7 @@ mod tests {
         let mut idx: usize = 0;
         parse_large_chunks_as_i64_0(
             rdr,
-            |x, y| {
+            |x, y, _hash| {
                 let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
@@ -1648,6 +1575,7 @@ mod tests {
             0,
             (content.len() - 1) as u64,
             106,
+            false,
         );
     }
 
@@ -1658,7 +1586,7 @@ mod tests {
         let mut idx: usize = 0;
         parse_large_chunks_as_i64_unsafe_0(
             rdr,
-            |x, y| {
+            |x, y, _hash| {
                 let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
@@ -1730,24 +1658,4 @@ mod tests {
         // Case when we have to semicolons, it finds the one that is in smaller part of the number
         assert_eq!(0, get_semicolon_pos(0x413b312e380a413b));
     }
-
-    // #[test]
-    // fn custom_parse_f64_simd_works() {
-    //     // Verify positive and negative numbers in the range [-99.9, 99.9] with 0.1 step size
-    //     for i in 0..1000 {
-    //         {
-    //             let f = (-i) as f64 / 10 as f64;
-    //             let s = format!("{:.1}", f);
-    //             let expected = f64::from_str(&s).unwrap();
-    //             assert_eq!(expected, custom_parse_f64_simd(&s));
-    //         }
-    //
-    //         {
-    //             let f = i as f64 / 10 as f64;
-    //             let s = format!("{:.1}", f);
-    //             let expected = f64::from_str(&s).unwrap();
-    //             assert_eq!(expected, custom_parse_f64_simd(&s));
-    //         }
-    //     }
-    // }
 }

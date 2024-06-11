@@ -6,8 +6,8 @@ use brc_core::{
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_as_i64,
     parse_large_chunks_as_i64_dummy, parse_large_chunks_as_i64_unsafe,
     parse_large_chunks_as_i64_v2, parse_large_chunks_simd, parse_large_chunks_simd_dummy,
-    parse_large_chunks_simd_v1, parse_large_chunks_v1, parse_large_chunks_v2,
-    parse_large_chunks_v3, sort_result, StateF,
+    parse_large_chunks_simd_v1, parse_large_chunks_v2, parse_large_chunks_v3, sort_result, StateF,
+    DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -48,7 +48,6 @@ fn main() {
         "parse_large_chunks_as_i64" => parse_large_chunks_as_i64,
         "parse_large_chunks_as_i64_v2" => parse_large_chunks_as_i64_v2,
         "parse_large_chunks_as_i64_unsafe" => parse_large_chunks_as_i64_unsafe,
-        "parse_large_chunks_v1" => parse_large_chunks_v1,
         "parse_large_chunks_simd_dummy" => parse_large_chunks_simd_dummy,
         "parse_large_chunks_simd" => parse_large_chunks_simd,
         "parse_large_chunks_simd_v1" => parse_large_chunks_simd_v1,
@@ -61,7 +60,10 @@ fn main() {
     let file_length = file.metadata().unwrap().len() as usize;
 
     let xs = if cores <= 1 {
-        let rdr = BufReader::with_capacity(10 * 1024 * 1024, File::open(&path).unwrap());
+        let rdr = BufReader::with_capacity(
+            DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+            File::open(&path).unwrap(),
+        );
         vec![func(rdr, 0, (file_length - 1) as u64, true)]
     } else {
         // Prepare chunks and run threads with chunks assigned to them
@@ -73,7 +75,6 @@ fn main() {
                 let end_inclusive = *e as u64;
                 let path = path.clone();
                 thread::Builder::new()
-                    .stack_size(10 * 1024 * 1024)
                     .spawn(move || {
                         let rdr = BufReader::with_capacity(
                             BUF_READER_CAPACITY,
