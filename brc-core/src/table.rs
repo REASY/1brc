@@ -1,15 +1,9 @@
-use crate::{byte_to_string_unsafe, StateF64, StateI64};
+use crate::{byte_to_string_unsafe, StateF, StateI};
 
 /// Open addressing table
 pub struct Table<const MAX_SIZE: usize> {
     // inner: [Option<(String, StateI64)>; MAX_SIZE], // stack allocation
-    inner: Vec<Option<(String, StateI64)>>,
-}
-
-enum Offset {
-    Exists(u32),
-    ToInsert(u32),
-    Overflow,
+    inner: Vec<Option<(String, StateI)>>,
 }
 
 impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
@@ -21,7 +15,7 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
     }
 
     #[inline]
-    fn find_slot(&mut self, hash: u64, key: &[u8]) -> &mut Option<(String, StateI64)> {
+    fn find_slot(&mut self, hash: u64, key: &[u8]) -> &mut Option<(String, StateI)> {
         let mut iter_idx: usize = 0;
         let len = self.inner.len();
         let slot_idx = loop {
@@ -51,7 +45,7 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
                 slot,
                 Some((
                     byte_to_string_unsafe(station_name_bytes).to_string(),
-                    StateI64::new(value),
+                    StateI::new(value),
                 )),
             );
         } else {
@@ -60,8 +54,8 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
         }
     }
 
-    pub fn to_result(&self) -> Vec<(String, StateF64)> {
-        let mut result: Vec<(String, StateF64)> = Vec::with_capacity(MAX_SIZE);
+    pub fn to_result(&self) -> Vec<(String, StateF)> {
+        let mut result: Vec<(String, StateF)> = Vec::with_capacity(MAX_SIZE);
         for item in &self.inner {
             match item {
                 None => {}
@@ -73,17 +67,19 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
         result
     }
 }
+#[allow(unused)]
 /// Slower than Table because Table has data locality
 pub struct KeyValueTable<const MAX_SIZE: usize> {
     keys: Vec<Option<String>>,
-    values: Vec<StateI64>,
+    values: Vec<StateI>,
 }
 
+#[allow(unused)]
 impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
     pub fn new() -> KeyValueTable<MAX_SIZE> {
         KeyValueTable {
             keys: (0..MAX_SIZE).map(|_| None).collect(),
-            values: (0..MAX_SIZE).map(|_| StateI64::default()).collect(),
+            values: (0..MAX_SIZE).map(|_| StateI::default()).collect(),
         }
     }
 
@@ -117,13 +113,13 @@ impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
             let new = Some(byte_to_string_unsafe(key).to_string());
             let _ = std::mem::replace(slot, new);
         } else {
-            let state: &mut StateI64 = &mut self.values[slot_idx];
+            let state: &mut StateI = &mut self.values[slot_idx];
             state.update(value)
         }
     }
 
-    pub fn to_result(&self) -> Vec<(String, StateF64)> {
-        let mut result: Vec<(String, StateF64)> = Vec::with_capacity(MAX_SIZE);
+    pub fn to_result(&self) -> Vec<(String, StateF)> {
+        let mut result: Vec<(String, StateF)> = Vec::with_capacity(MAX_SIZE);
         for i in 0..self.keys.len() {
             match &self.keys[i] {
                 None => {}

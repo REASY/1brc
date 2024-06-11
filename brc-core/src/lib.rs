@@ -8,14 +8,14 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::str::FromStr;
 
 #[derive(Debug)]
-pub struct StateF64 {
+pub struct StateF {
     min: f64,
     max: f64,
     count: u32,
     sum: f64,
 }
 
-impl Default for StateF64 {
+impl Default for StateF {
     fn default() -> Self {
         Self {
             min: f64::MAX,
@@ -26,14 +26,14 @@ impl Default for StateF64 {
     }
 }
 
-impl Display for StateF64 {
+impl Display for StateF {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let avg = self.sum / (self.count as f64);
         write!(f, "{:.1}/{avg:.1}/{:.1}", self.min, self.max)
     }
 }
 
-impl StateF64 {
+impl StateF {
     fn update(&mut self, v: f64) {
         self.min = self.min.min(v);
         self.max = self.max.max(v);
@@ -50,14 +50,14 @@ impl StateF64 {
 }
 
 #[derive(Debug, Clone)]
-pub struct StateI64 {
+pub struct StateI {
     min: i16,
     max: i16,
     count: u32,
     sum: i64,
 }
 
-impl Default for StateI64 {
+impl Default for StateI {
     fn default() -> Self {
         Self {
             min: i16::MAX,
@@ -68,16 +68,16 @@ impl Default for StateI64 {
     }
 }
 
-impl Display for StateI64 {
+impl Display for StateI {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let avg = self.sum as f64 / 10.0f64 / (self.count as f64);
         write!(f, "{:.1}/{avg:.1}/{:.1}", self.min, self.max)
     }
 }
 
-impl StateI64 {
-    fn new(v: i16) -> StateI64 {
-        StateI64 {
+impl StateI {
+    fn new(v: i16) -> StateI {
+        StateI {
             min: v,
             max: v,
             count: 1,
@@ -98,8 +98,8 @@ impl StateI64 {
         self.sum += other.sum;
     }
 
-    pub fn to_f64(&self) -> StateF64 {
-        StateF64 {
+    pub fn to_f64(&self) -> StateF {
+        StateF {
             min: self.min as f64 / 10.0f64,
             max: self.max as f64 / 10.0f64,
             count: self.count,
@@ -108,7 +108,7 @@ impl StateI64 {
     }
 }
 
-pub fn sort_result(all: &mut Vec<(String, StateF64)>) {
+pub fn sort_result(all: &mut Vec<(String, StateF)>) {
     all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 }
 
@@ -176,7 +176,7 @@ pub fn naive_line_by_line_dummy<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     _should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) -> Vec<(String, StateF)> {
     let mut dummy_result: usize = 0;
     naive_line_by_line0(
         rdr,
@@ -187,12 +187,12 @@ pub fn naive_line_by_line_dummy<R: Read + Seek>(
         end_inclusive,
     );
 
-    let mut s = StateF64::default();
+    let mut s = StateF::default();
     s.count = dummy_result as u32;
     vec![("dummy".to_string(), s)]
 }
 
-const DEFAULT_HASHMAP_CAPACITY: usize = 1000;
+const DEFAULT_HASHMAP_CAPACITY: usize = 10000;
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
@@ -202,7 +202,7 @@ pub fn naive_line_by_line<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) -> Vec<(String, StateF)> {
     let mut hs = std::collections::HashMap::with_capacity(DEFAULT_HASHMAP_CAPACITY);
     naive_line_by_line0(
         rdr,
@@ -215,7 +215,7 @@ pub fn naive_line_by_line<R: Read + Seek>(
             // Insert new state or update existing
             match hs.get_mut(station_name) {
                 None => {
-                    let mut s = StateF64::default();
+                    let mut s = StateF::default();
                     s.update(value);
                     hs.insert(station_name.to_string(), s);
                 }
@@ -226,7 +226,7 @@ pub fn naive_line_by_line<R: Read + Seek>(
         end_inclusive,
     );
 
-    let mut all: Vec<(String, StateF64)> = hs.into_iter().collect();
+    let mut all: Vec<(String, StateF)> = hs.into_iter().collect();
     if should_sort {
         sort_result(&mut all);
     }
@@ -257,7 +257,7 @@ pub const fn get_as_scaled_integer(bytes: &[u8]) -> i16 {
         (true, 5) => get_digit(bytes[1]) * 100 + get_digit(bytes[2]) * 10 + get_digit(bytes[4]),
         (false, 3) => get_digit(bytes[0]) * 10 + get_digit(bytes[2]),
         (false, 4) => get_digit(bytes[0]) * 100 + get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
-        x => panic!(),
+        _x => panic!(),
     };
     if is_negative {
         -(as_decimal as i16)
@@ -266,35 +266,16 @@ pub const fn get_as_scaled_integer(bytes: &[u8]) -> i16 {
     }
 }
 
-#[inline]
-unsafe fn simd_calculate_decimal(bytes: &[u8; 4]) -> i32 {
-    use std::arch::x86_64::*;
-
-    let digit_offsets = _mm_set1_epi8(b'0' as i8);
-    let byte_vec = _mm_loadu_si128(bytes.as_ptr() as *const __m128i);
-    let digits = _mm_sub_epi8(byte_vec, digit_offsets);
-
-    let multiplier_vec = _mm_setr_epi16(100, 10, 1, 0, 0, 0, 0, 0);
-    let digits_16 = _mm_cvtepu8_epi16(digits);
-
-    let multiplied = _mm_madd_epi16(digits_16, multiplier_vec);
-
-    let summed = _mm_hadd_epi16(multiplied, _mm_setzero_si128());
-    let result = _mm_extract_epi16::<0>(summed) + _mm_extract_epi16::<1>(summed);
-
-    result as i32
-}
-
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
-/// The method relies on [`naive_line_by_line0`] but uses [`byte_to_string_unsafe`], aggregates data in [`StateI64`] and uses [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
+/// The method relies on [`naive_line_by_line0`] but uses [`byte_to_string_unsafe`], aggregates data in [`StateI`] and uses [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
 pub fn naive_line_by_line_v2<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<String, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     naive_line_by_line0(
         rdr,
@@ -303,7 +284,7 @@ pub fn naive_line_by_line_v2<R: Read + Seek>(
             let value = get_as_scaled_integer(measurement_bytes);
             match hs.get_mut(station_name) {
                 None => {
-                    let mut s = StateI64::new(value);
+                    let mut s = StateI::new(value);
                     s.update(value);
                     hs.insert(station_name.to_string(), s);
                 }
@@ -313,7 +294,7 @@ pub fn naive_line_by_line_v2<R: Read + Seek>(
         start,
         end_inclusive,
     );
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
         .map(|(k, v)| (k.clone(), v.to_f64()))
         .collect();
@@ -347,7 +328,9 @@ fn seek_backward_to_newline<'a, R: Read + Seek>(
     valid_buffer
 }
 
-#[inline(always)]
+const INIT_HASH_VALUE: u64 = 0x517cc1b727220a95;
+
+#[inline]
 const fn get_semicolon_pos(w: i64) -> u32 {
     // Check http://www.graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
     let x = w ^ 0x3b3b3b3b3b3b3b3b;
@@ -363,18 +346,13 @@ const fn get_semicolon_mask(w: i64) -> i64 {
     mask
 }
 
-#[inline(always)]
-fn set_zero_at(value: i64, pos: u32) -> i64 {
-    value & (!(0xFF << (pos as i64 * 8)))
-}
-
-#[inline(always)]
+#[inline]
 const fn get_decimal_separator_pos(value: i64) -> u32 {
     i64::trailing_zeros(!value & 0x10101000)
 }
 
 /// Special method to convert a number in the ascii number into an int without branches created by Quan Anh Mai.
-#[inline(always)]
+#[inline]
 pub const fn to_scaled_integer_branchless(value: i64) -> (i16, i16) {
     let decimal_sep_pos = get_decimal_separator_pos(value) as i32;
     let shift: i32 = 28 - decimal_sep_pos;
@@ -415,8 +393,9 @@ fn process_buffer_as_bytes<F>(
     mut i: usize,
     n: usize,
     mut next_name_idx: usize,
+    should_calculate_hash: bool,
 ) where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     while i < n {
         let byte = valid_buffer[i];
@@ -435,8 +414,13 @@ fn process_buffer_as_bytes<F>(
             let station_name_bytes = &valid_buffer[next_name_idx..i];
             let measurement_bytes = &valid_buffer[start_measurement_idx..j];
             let v = get_as_scaled_integer(measurement_bytes);
+            let hash = if should_calculate_hash {
+                calculate_hash(&station_name_bytes)
+            } else {
+                0
+            };
             // Call processor to handle the temperature for the station
-            processor(station_name_bytes, v);
+            processor(station_name_bytes, v, hash);
 
             // Assign next name index
             if j < n - 1 {
@@ -450,9 +434,9 @@ fn process_buffer_as_bytes<F>(
 }
 
 #[inline]
-fn process_buffer_as_i64<F>(processor: &mut F, valid_buffer: &[u8])
+fn process_buffer_as_i64<F>(processor: &mut F, valid_buffer: &[u8], should_calculate_hash: bool)
 where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     const BUF_SIZE: usize = std::mem::size_of::<i64>();
 
@@ -460,11 +444,20 @@ where
     let mut i: usize = 0;
     let mut next_name_idx = 0;
     let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
+    let mut hash: u64 = 0;
+    if should_calculate_hash {
+        hash = INIT_HASH_VALUE;
+    }
     while i < n - (BUF_SIZE + MAX_MEASUREMENT_LEN) {
         b0.copy_from_slice(&valid_buffer[i..i + BUF_SIZE]);
         let qw0 = i64::from_le_bytes(b0);
         let sp0 = get_semicolon_pos(qw0);
         if sp0 != 8 {
+            if should_calculate_hash {
+                let word = get_whole_word(qw0 as u64, sp0 as usize);
+                hash = hash ^ word;
+            }
+
             let end_exclusive = i + sp0 as usize;
             let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
 
@@ -476,21 +469,35 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(station_name_bytes, v);
+            processor(station_name_bytes, v, hash);
 
+            hash = 0;
+            if should_calculate_hash {
+                hash = INIT_HASH_VALUE;
+            }
             i = next_name_idx;
         } else {
             i += 8;
+            if should_calculate_hash {
+                hash = hash ^ (qw0 as u64);
+            }
         }
     }
     // Handle remaining
-    process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx);
+    process_buffer_as_bytes(
+        processor,
+        valid_buffer,
+        i,
+        n,
+        next_name_idx,
+        should_calculate_hash,
+    );
 }
 
 #[inline]
 fn process_buffer_as_i64_as_java<F>(processor: &mut F, valid_buffer: &[u8])
 where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     const BUF_SIZE: usize = std::mem::size_of::<i64>();
 
@@ -548,7 +555,7 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(station_name_bytes, v);
+            processor(station_name_bytes, v, 0);
 
             i = next_name_idx;
         } else {
@@ -592,13 +599,13 @@ where
         // }
     }
     // Handle remaining
-    process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx);
+    process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx, false);
 }
 
 #[inline]
 fn process_buffer_as_i64_unsafe<F>(processor: &mut F, valid_buffer: &[u8])
 where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     let n = valid_buffer.len();
     let mut i: usize = 0;
@@ -621,7 +628,7 @@ where
             let (v, len) = to_scaled_integer_branchless(qw1);
 
             next_name_idx = start_measurement_idx + len as usize;
-            processor(station_name_bytes, v);
+            processor(station_name_bytes, v, 0);
 
             ptr = unsafe { ptr.add(len as usize) };
 
@@ -632,102 +639,10 @@ where
         }
     }
     // Handle remaining
-    process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx);
+    process_buffer_as_bytes(processor, valid_buffer, i, n, next_name_idx, false);
 }
 
-#[inline(always)]
-fn handle_valid_buffer_i64<F>(processor: &mut F, valid_buffer: &[u8])
-where
-    F: FnMut(&[u8], &[u8]),
-{
-    let n = valid_buffer.len();
-    let mut i: usize = 0;
-    let mut next_name_idx = 0;
-    let (_prefix, i64_buf, _suffix) = unsafe { &valid_buffer.align_to::<i64>() };
-    // println!("prefix: {}, i64_buf: {}, suffix: {}", prefix.len(), i64_buf.len(), suffix.len());
-
-    for k in 0..i64_buf.len() {
-        let qw0 = i64_buf[k];
-        let sp0 = get_semicolon_pos(qw0);
-        //
-        // let qw1 = i64_buf[k + 1];
-        // let sp1 = get_semicolon_pos(qw1);
-
-        // println!("qw0: {qw0:#08X},  sp0: {sp0}, qw1: {qw1:#08X}, sp1: {sp1}");
-        if sp0 != 8 {
-            let mut j: usize = i + sp0 as usize + 1;
-            let start_measurement_idx: usize = j;
-            // The shortest temperature as string is "X.Y" that has length = 3
-            j += 3;
-            // Check remaining 2 bytes that could be because of number like "-XY.Z"
-            if valid_buffer[j] != b'\n' {
-                j += 1;
-            }
-            if valid_buffer[j] != b'\n' {
-                j += 1;
-            }
-            let end_exclusive = i + sp0 as usize;
-            let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
-            next_name_idx = j + 1;
-            let measurement_bytes = &valid_buffer[start_measurement_idx..j];
-            processor(station_name_bytes, measurement_bytes);
-
-            // add handler for very short station names that might end-up being like `;0.0\na;0`
-            let zeroed = set_zero_at(qw0, sp0);
-            let next_sp = get_semicolon_pos(zeroed);
-            if next_sp != 8 {
-                println!("zeroed: {zeroed:#08X},  next_sp: {next_sp}");
-                let mut j: usize = i + next_sp as usize + 1;
-                let start_measurement_idx: usize = j;
-                // The shortest temperature as string is "X.Y" that has length = 3
-                j += 3;
-                // Check remaining 2 bytes that could be because of number like "-XY.Z"
-                if valid_buffer[j] != b'\n' {
-                    j += 1;
-                }
-                if valid_buffer[j] != b'\n' {
-                    j += 1;
-                }
-                let end_exclusive = i + next_sp as usize;
-                let station_name_bytes = &valid_buffer[next_name_idx..end_exclusive];
-                next_name_idx = j + 1;
-                let measurement_bytes = &valid_buffer[start_measurement_idx..j];
-                processor(station_name_bytes, measurement_bytes);
-            }
-        }
-        i += 8;
-    }
-    while i < n {
-        let byte = valid_buffer[i];
-        if byte == b';' {
-            let mut j: usize = i + 1;
-            let start_measurement_idx: usize = j;
-            // The shortest temperature as string is "X.Y" that has length = 3
-            j += 3;
-            // Check remaining 2 bytes that could be because of number like "-XY.Z"
-            if valid_buffer[j] != b'\n' {
-                j += 1;
-            }
-            if valid_buffer[j] != b'\n' {
-                j += 1;
-            }
-            let station_name_bytes = &valid_buffer[next_name_idx..i];
-            let measurement_bytes = &valid_buffer[start_measurement_idx..j];
-            // Call processor to handle the temperature for the station
-            processor(station_name_bytes, measurement_bytes);
-
-            // Assign next name index
-            if j < n - 1 {
-                next_name_idx = j + 1;
-            }
-
-            i = j;
-        }
-        i += 1;
-    }
-}
-
-const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 64 * 1024 * 1024;
+const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 128 * 1024 * 1024;
 
 /// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
 ///
@@ -740,7 +655,7 @@ fn parse_large_chunks_as_bytes0<R: Read + Seek, F>(
     end_inclusive: u64,
     buffer_size: usize,
 ) where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
@@ -758,7 +673,14 @@ fn parse_large_chunks_as_bytes0<R: Read + Seek, F>(
             read_bytes = remaining;
         }
         let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
-        process_buffer_as_bytes(&mut processor, valid_buffer, 0, valid_buffer.len(), 0);
+        process_buffer_as_bytes(
+            &mut processor,
+            valid_buffer,
+            0,
+            valid_buffer.len(),
+            0,
+            false,
+        );
         offset += valid_buffer.len();
     }
 }
@@ -771,8 +693,9 @@ fn parse_large_chunks_as_i64_0<R: Read + Seek, F>(
     start: u64,
     end_inclusive: u64,
     buffer_size: usize,
+    should_calculate_hash: bool,
 ) where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
@@ -792,7 +715,7 @@ fn parse_large_chunks_as_i64_0<R: Read + Seek, F>(
 
         let valid_buffer = seek_backward_to_newline(&mut rdr, &buf, read_bytes);
         // println!("Read {read_bytes}, valid_buffer: {}", valid_buffer.len());
-        process_buffer_as_i64(&mut processor, valid_buffer);
+        process_buffer_as_i64(&mut processor, valid_buffer, should_calculate_hash);
         offset += valid_buffer.len();
     }
 }
@@ -804,7 +727,7 @@ fn parse_large_chunks_as_i64_unsafe_0<R: Read + Seek, F>(
     end_inclusive: u64,
     buffer_size: usize,
 ) where
-    F: FnMut(&[u8], i16),
+    F: FnMut(&[u8], i16, u64),
 {
     let end_incl_usize = end_inclusive as usize;
     let mut offset: usize = start as usize;
@@ -834,11 +757,11 @@ pub fn parse_large_chunks_as_bytes_dummy<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     _should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) -> Vec<(String, StateF)> {
     let mut dummy_result: usize = 0;
     parse_large_chunks_as_bytes0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
+        |station_name_bytes, measurement_bytes, _| {
             dummy_result += station_name_bytes.len() + measurement_bytes as usize;
         },
         start,
@@ -846,7 +769,7 @@ pub fn parse_large_chunks_as_bytes_dummy<R: Read + Seek>(
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
 
-    let mut s = StateF64::default();
+    let mut s = StateF::default();
     s.count = dummy_result as u32;
     vec![("dummy".to_string(), s)]
 }
@@ -859,27 +782,24 @@ pub fn parse_large_chunks_as_bytes<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<Vec<u8>, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_as_bytes0(
         rdr,
-        |station_name_bytes, value| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
-            match hs.get_mut(station_name) {
-                None => {
-                    hs.insert(station_name.to_string(), StateI64::new(value));
-                }
-                Some(prev) => prev.update(value),
+        |station_name_bytes, value, _| match hs.get_mut(station_name_bytes) {
+            None => {
+                hs.insert(station_name_bytes.to_vec(), StateI::new(value));
             }
+            Some(prev) => prev.update(value),
         },
         start,
         end_inclusive,
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
-        .map(|(k, v)| (k.clone(), v.to_f64()))
+        .map(|(k, v)| (byte_to_string_unsafe(k.as_slice()).to_string(), v.to_f64()))
         .collect();
     if should_sort {
         sort_result(&mut all);
@@ -892,19 +812,20 @@ pub fn parse_large_chunks_as_i64_dummy<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     _should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) -> Vec<(String, StateF)> {
     let mut dummy_result: usize = 0;
     parse_large_chunks_as_i64_0(
         rdr,
-        |station_name_bytes, measurement_bytes| {
+        |station_name_bytes, measurement_bytes, _| {
             dummy_result += station_name_bytes.len() + measurement_bytes as usize;
         },
         start,
         end_inclusive,
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+        false,
     );
 
-    let mut s = StateF64::default();
+    let mut s = StateF::default();
     s.count = dummy_result as u32;
     vec![("dummy".to_string(), s)]
 }
@@ -917,28 +838,52 @@ pub fn parse_large_chunks_as_i64<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<Vec<u8>, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_as_i64_0(
         rdr,
-        |station_name_bytes, value| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
-            match hs.get_mut(station_name) {
-                None => {
-                    hs.insert(station_name.to_string(), StateI64::new(value));
-                }
-                Some(prev) => prev.update(value),
+        |station_name_bytes, value, _| match hs.get_mut(station_name_bytes) {
+            None => {
+                hs.insert(station_name_bytes.to_vec(), StateI::new(value));
             }
+            Some(prev) => prev.update(value),
         },
         start,
         end_inclusive,
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+        false,
     );
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
-        .map(|(k, v)| (k.clone(), v.to_f64()))
+        .map(|(k, v)| (byte_to_string_unsafe(k.as_slice()).to_string(), v.to_f64()))
         .collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+pub fn parse_large_chunks_as_i64_v2<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF)> {
+    const TABLE_SIZE: usize = 10000;
+
+    let mut table: Table<TABLE_SIZE> = Table::new();
+    parse_large_chunks_as_i64_0(
+        rdr,
+        |station_name_bytes, value, hash| {
+            table.insert_or_update(station_name_bytes, hash, value);
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+        true,
+    );
+    let mut all: Vec<(String, StateF)> = table.to_result();
     if should_sort {
         sort_result(&mut all);
     }
@@ -948,16 +893,16 @@ pub fn parse_large_chunks_as_i64<R: Read + Seek>(
 pub fn parse_large_chunks_as_i64_mm(
     valid_buffer: &[u8],
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<String, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
 
     process_buffer_as_i64_unsafe(
-        &mut |station_name_bytes, value| {
+        &mut |station_name_bytes, value, _| {
             let station_name: &str = byte_to_string_unsafe(station_name_bytes);
             match hs.get_mut(station_name) {
                 None => {
-                    hs.insert(station_name.to_string(), StateI64::new(value));
+                    hs.insert(station_name.to_string(), StateI::new(value));
                 }
                 Some(prev) => prev.update(value),
             }
@@ -965,7 +910,7 @@ pub fn parse_large_chunks_as_i64_mm(
         valid_buffer,
     );
 
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
         .map(|(k, v)| (k.clone(), v.to_f64()))
         .collect();
@@ -980,27 +925,24 @@ pub fn parse_large_chunks_as_i64_unsafe<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<Vec<u8>, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_as_i64_unsafe_0(
         rdr,
-        |station_name_bytes, value| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
-            match hs.get_mut(station_name) {
-                None => {
-                    hs.insert(station_name.to_string(), StateI64::new(value));
-                }
-                Some(prev) => prev.update(value),
+        |station_name_bytes, value, _| match hs.get_mut(station_name_bytes) {
+            None => {
+                hs.insert(station_name_bytes.to_vec(), StateI::new(value));
             }
+            Some(prev) => prev.update(value),
         },
         start,
         end_inclusive,
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
-        .map(|(k, v)| (k.clone(), v.to_f64()))
+        .map(|(k, v)| (byte_to_string_unsafe(k.as_slice()).to_string(), v.to_f64()))
         .collect();
     if should_sort {
         sort_result(&mut all);
@@ -1072,7 +1014,7 @@ pub fn parse_large_chunks_simd_dummy<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     _should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) -> Vec<(String, StateF)> {
     let mut dummy_result: usize = 0;
     parse_large_chunks_simd0(
         rdr,
@@ -1084,7 +1026,7 @@ pub fn parse_large_chunks_simd_dummy<R: Read + Seek>(
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
 
-    let mut s = StateF64::default();
+    let mut s = StateF::default();
     s.count = dummy_result as u32;
     vec![("dummy".to_string(), s)]
 }
@@ -1097,19 +1039,18 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<String, StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<Vec<u8>, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_simd0(
         rdr,
         |station_name_bytes, measurement_bytes| {
-            let station_name: &str = byte_to_string_unsafe(station_name_bytes);
             let value = get_as_scaled_integer(measurement_bytes);
-            match hs.get_mut(station_name) {
+            match hs.get_mut(station_name_bytes) {
                 None => {
-                    let mut s = StateI64::new(value);
+                    let mut s = StateI::new(value);
                     s.update(value);
-                    hs.insert(station_name.to_string(), s);
+                    hs.insert(station_name_bytes.to_vec(), s);
                 }
                 Some(prev) => prev.update(value),
             }
@@ -1118,9 +1059,9 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
         end_inclusive,
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
-        .map(|(k, v)| (k.clone(), v.to_f64()))
+        .map(|(k, v)| (byte_to_string_unsafe(k.as_slice()).to_string(), v.to_f64()))
         .collect();
     if should_sort {
         sort_result(&mut all);
@@ -1159,8 +1100,8 @@ pub fn parse_large_chunks_v1<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<&[u8], StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<&[u8], StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     let mut holder: Holder = {
         let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
@@ -1207,7 +1148,7 @@ pub fn parse_large_chunks_v1<R: Read + Seek>(
                 match hs.get_mut(station_name_bytes) {
                     None => {
                         let name = holder.store(station_name_bytes);
-                        hs.insert(name, StateI64::new(v));
+                        hs.insert(name, StateI::new(v));
                     }
                     Some(prev) => prev.update(v),
                 }
@@ -1223,7 +1164,7 @@ pub fn parse_large_chunks_v1<R: Read + Seek>(
 
         offset += n;
     }
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
         .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
         .collect();
@@ -1235,14 +1176,14 @@ pub fn parse_large_chunks_v1<R: Read + Seek>(
 
 /// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
 ///
-/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI64`], [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks_simd`] or [`parse_large_chunks_as_bytes`]
+/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI`], [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks_simd`] or [`parse_large_chunks_as_bytes`]
 pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    let mut hs: FxHashMap<&[u8], StateI64> =
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<&[u8], StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     let mut holder: Holder = {
         let static_ref: &'static mut [u8] = vec![0; 100 * 10000].leak();
@@ -1254,7 +1195,7 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
             let value = get_as_scaled_integer(measurement_bytes);
             match hs.get_mut(station_name_bytes) {
                 None => {
-                    let s = StateI64::new(value);
+                    let s = StateI::new(value);
                     let name = holder.store(station_name_bytes);
                     hs.insert(name, s);
                 }
@@ -1265,7 +1206,7 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
         end_inclusive,
         DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
     );
-    let mut all: Vec<(String, StateF64)> = hs
+    let mut all: Vec<(String, StateF)> = hs
         .into_iter()
         .map(|(k, v)| (byte_to_string_unsafe(k).to_string(), v.to_f64()))
         .collect();
@@ -1280,9 +1221,8 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
-    const TABLE_SIZE: usize = 13337;
-    const INIT_HASH_VALUE: u64 = 0x517cc1b727220a95;
+) -> Vec<(String, StateF)> {
+    const TABLE_SIZE: usize = 10000;
 
     let mut table: Table<TABLE_SIZE> = Table::new();
 
@@ -1331,6 +1271,7 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
                 let (v, len) = to_scaled_integer_branchless(qw1);
 
                 next_name_idx = start_measurement_idx + len as usize;
+
                 table.insert_or_update(station_name_bytes, hash, v);
 
                 i = next_name_idx;
@@ -1341,44 +1282,53 @@ pub fn parse_large_chunks_v2<R: Read + Seek>(
                 hash = hash ^ (qw0 as u64);
             }
         }
-
+        // Process remaining
         process_buffer_as_bytes(
-            &mut |station_name_bytes, v| {
-                let chunks = station_name_bytes.chunks(8);
-                hash = INIT_HASH_VALUE;
-
-                for c in chunks {
-                    if c.len() == 8 {
-                        b0.copy_from_slice(c);
-                    } else {
-                        let mut i: usize = 0;
-                        while i < c.len() {
-                            b0[i] = c[i];
-                            i += 1;
-                        }
-                        while i < 8 {
-                            b0[i] = 0;
-                            i += 1;
-                        }
-                    }
-                    let qw0 = i64::from_le_bytes(b0);
-                    hash = hash ^ (qw0 as u64);
-                }
+            &mut |station_name_bytes, v, hash| {
+                // Calculate hash the same way as above
                 table.insert_or_update(station_name_bytes, hash, v)
             },
             valid_buffer,
             i,
             n,
             next_name_idx,
+            true,
         );
 
         offset += valid_buffer.len();
     }
-    let mut all: Vec<(String, StateF64)> = table.to_result();
+    let mut all: Vec<(String, StateF)> = table.to_result();
     if should_sort {
         sort_result(&mut all);
     }
     all
+}
+
+#[inline]
+fn calculate_hash(station_name_bytes: &&[u8]) -> u64 {
+    const BUF_SIZE: usize = std::mem::size_of::<i64>();
+    let mut b0: [u8; BUF_SIZE] = [0_u8; BUF_SIZE];
+    let chunks = station_name_bytes.chunks(8);
+    let mut hash: u64 = INIT_HASH_VALUE;
+
+    for c in chunks {
+        if c.len() == 8 {
+            b0.copy_from_slice(c);
+        } else {
+            let mut i: usize = 0;
+            while i < c.len() {
+                b0[i] = c[i];
+                i += 1;
+            }
+            while i < 8 {
+                b0[i] = 0;
+                i += 1;
+            }
+        }
+        let qw0 = i64::from_le_bytes(b0);
+        hash = hash ^ (qw0 as u64);
+    }
+    hash
 }
 
 pub fn parse_large_chunks_v3<R: Read + Seek>(
@@ -1386,7 +1336,7 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
     start: u64,
     end_inclusive: u64,
     should_sort: bool,
-) -> Vec<(String, StateF64)> {
+) -> Vec<(String, StateF)> {
     const TABLE_SIZE: usize = 10000;
     let mut table: Table<TABLE_SIZE> = Table::new();
 
@@ -1495,7 +1445,7 @@ pub fn parse_large_chunks_v3<R: Read + Seek>(
         }
         offset += valid_buffer.len();
     }
-    let mut all: Vec<(String, StateF64)> = table.to_result();
+    let mut all: Vec<(String, StateF)> = table.to_result();
     if should_sort {
         sort_result(&mut all);
     }

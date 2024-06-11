@@ -1,9 +1,13 @@
+// #[global_allocator]
+// static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
 use brc_core::{
     naive_line_by_line, naive_line_by_line_dummy, naive_line_by_line_v2,
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_as_i64,
-    parse_large_chunks_as_i64_dummy, parse_large_chunks_as_i64_unsafe, parse_large_chunks_simd,
-    parse_large_chunks_simd_dummy, parse_large_chunks_simd_v1, parse_large_chunks_v1,
-    parse_large_chunks_v2, parse_large_chunks_v3, sort_result, StateF64,
+    parse_large_chunks_as_i64_dummy, parse_large_chunks_as_i64_unsafe,
+    parse_large_chunks_as_i64_v2, parse_large_chunks_simd, parse_large_chunks_simd_dummy,
+    parse_large_chunks_simd_v1, parse_large_chunks_v1, parse_large_chunks_v2,
+    parse_large_chunks_v3, sort_result, StateF,
 };
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -34,7 +38,7 @@ fn main() {
         .map(|c| c.clone())
         .unwrap_or_else(|| DEFAULT_IMPL.to_string());
 
-    let func: fn(BufReader<_>, u64, u64, bool) -> Vec<(String, StateF64)> = match method.as_str() {
+    let func: fn(BufReader<_>, u64, u64, bool) -> Vec<(String, StateF)> = match method.as_str() {
         "naive_line_by_line_dummy" => naive_line_by_line_dummy,
         DEFAULT_IMPL => naive_line_by_line,
         "naive_line_by_line_v2" => naive_line_by_line_v2,
@@ -42,6 +46,7 @@ fn main() {
         "parse_large_chunks_as_bytes" => parse_large_chunks_as_bytes,
         "parse_large_chunks_as_i64_dummy" => parse_large_chunks_as_i64_dummy,
         "parse_large_chunks_as_i64" => parse_large_chunks_as_i64,
+        "parse_large_chunks_as_i64_v2" => parse_large_chunks_as_i64_v2,
         "parse_large_chunks_as_i64_unsafe" => parse_large_chunks_as_i64_unsafe,
         "parse_large_chunks_v1" => parse_large_chunks_v1,
         "parse_large_chunks_simd_dummy" => parse_large_chunks_simd_dummy,
@@ -59,7 +64,7 @@ fn main() {
         let rdr = BufReader::with_capacity(10 * 1024 * 1024, File::open(&path).unwrap());
         vec![func(rdr, 0, (file_length - 1) as u64, true)]
     } else {
-        //
+        // Prepare chunks and run threads with chunks assigned to them
         let chunks = get_chunks(cores, file);
         let threads: Vec<_> = chunks
             .iter()
@@ -79,7 +84,7 @@ fn main() {
                     .unwrap()
             })
             .collect();
-        let mut r: Vec<Vec<(String, StateF64)>> = Vec::with_capacity(cores);
+        let mut r: Vec<Vec<(String, StateF)>> = Vec::with_capacity(cores);
         for t in threads {
             r.push(t.join().unwrap());
         }
@@ -87,7 +92,7 @@ fn main() {
     };
 
     // Build the final hashmap by merging all the measurements for the same location
-    let mut hs: hashbrown::HashMap<String, StateF64> = hashbrown::HashMap::new();
+    let mut hs: hashbrown::HashMap<String, StateF> = hashbrown::HashMap::new();
     for r in xs {
         for (k, s) in r {
             match hs.get_mut(k.as_str()) {
@@ -120,7 +125,7 @@ fn main() {
     );
 }
 
-fn prepare_output(final_result: &mut Vec<(String, StateF64)>) -> String {
+fn prepare_output(final_result: &mut Vec<(String, StateF)>) -> String {
     let mut res: String = String::new();
     res.push_str("{");
     for (i, (name, state)) in final_result.iter().enumerate() {
