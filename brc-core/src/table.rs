@@ -24,10 +24,9 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
     fn find_slot(&mut self, hash: u64, key: &[u8]) -> &mut Option<(String, StateI64)> {
         let mut iter_idx: usize = 0;
         let len = self.inner.len();
-
-        let start_idx = hash as usize;
         let slot_idx = loop {
-            let idx_mod: usize = (start_idx + iter_idx) % len;
+            // Linear probing
+            let idx_mod: usize = (hash as usize + iter_idx) % len;
             match &self.inner[idx_mod] {
                 Some((k, _)) if k.as_bytes().eq(key) => break idx_mod,
                 None => break idx_mod,
@@ -92,10 +91,9 @@ impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
     fn find_slot(&mut self, hash: u64, key: &[u8]) -> usize {
         let mut iter_idx: usize = 0;
         let len: usize = self.keys.len();
-
-        let start_idx = hash as usize;
         let slot_idx = loop {
-            let idx_mod: usize = (start_idx + iter_idx) % len;
+            // Linear probing
+            let idx_mod: usize = (hash as usize + iter_idx) % len;
             match &self.keys[idx_mod] {
                 Some(k) if k.as_bytes().eq(key) => break idx_mod,
                 None => break idx_mod,
@@ -115,7 +113,6 @@ impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
     pub fn insert_or_update(&mut self, key: &[u8], hash: u64, value: i16) {
         let slot_idx = self.find_slot(hash, key);
         let slot = &mut self.keys[slot_idx];
-        // let mut slot: &mut Option<(String, StateI64)> = self.find_slot(hash, key);
         if slot.is_none() {
             let new = Some(byte_to_string_unsafe(key).to_string());
             let _ = std::mem::replace(slot, new);
