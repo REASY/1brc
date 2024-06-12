@@ -5,9 +5,11 @@
 
 - 48 Intel vCPUs / 96 GB Memory / 600 GB Disk, dedicated CPU-optimized DigitalOcean instance with Premium Intel
   CPU, [c-48-intel](https://docs.digitalocean.com/products/droplets/details/pricing/)
+- Ubuntu 24.04 LTS (GNU/Linux 6.8.0-31-generic x86_64)
 - Rust compiler rustc 1.78.0 (9b00956e5 2024-04-29), x86_64-unknown-linux-gnu, LLVM version: 18.1.2
 - Java 21.0.3 2024-04-16 LTS, Java HotSpot(TM) 64-Bit Server VM Oracle GraalVM 21.0.3+7.1 (build
   21.0.3+7-LTS-jvmci-23.1-b37, mixed mode, sharing)
+- File with 1 billion measurements is copied to a directory created in tmpfs
 
 # Reference Rust solution [tumdum/1brc](https://github.com/tumdum/1brc)
 
