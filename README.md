@@ -9,7 +9,7 @@
 - Rust compiler rustc 1.78.0 (9b00956e5 2024-04-29), x86_64-unknown-linux-gnu, LLVM version: 18.1.2
 - Java 21.0.3 2024-04-16 LTS, Java HotSpot(TM) 64-Bit Server VM Oracle GraalVM 21.0.3+7.1 (build
   21.0.3+7-LTS-jvmci-23.1-b37, mixed mode, sharing)
-- File with 1 billion measurements is copied to a directory created in tmpfs
+- File with 1 billion measurements that is used as an input is stored in [tmpfs](https://docs.kernel.org/filesystems/tmpfs.html)
 
 # Reference Rust solution [tumdum/1brc](https://github.com/tumdum/1brc)
 
