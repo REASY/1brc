@@ -49,6 +49,29 @@ The results obtained by running [scripts/run_benchmark.sh](scripts/run_benchmark
 | parse_large_chunks_as_i64_v2      | 48                |  1.223 ± 0.012 |   1.210 |   1.238 |
 | parse_large_chunks_as_i64_as_java | 48                |  1.174 ± 0.008 |   1.163 |   1.180 |
 
+## Single-thread dummy implementations to understand how fast it can be
+
+| Implementation                    |       Mean [s] | Min [s] | Max [s] |
+|:----------------------------------|---------------:|--------:|--------:|
+| naive_line_by_line_dummy          | 44.508 ± 0.370 |  44.191 |  45.042 |
+| parse_large_chunks_as_bytes_dummy | 25.021 ± 0.059 |  24.941 |  25.081 |
+| parse_large_chunks_as_i64_dummy   | 16.163 ± 0.156 |  16.021 |  16.328 |
+| parse_large_chunks_simd_dummy     | 10.931 ± 0.044 |  10.896 |  10.995 |
+
+## All implementations in single thread
+
+| Command                           |       Mean [s] | Min [s] | Max [s] |    Relative |
+|:----------------------------------|---------------:|--------:|--------:|------------:|
+| naive_line_by_line                | 91.523 ± 0.482 |  90.955 |  92.110 | 5.43 ± 0.03 |
+| naive_line_by_line_v2             | 58.189 ± 0.306 |  57.847 |  58.493 | 3.45 ± 0.02 |
+| parse_large_chunks_as_bytes       | 33.714 ± 0.096 |  33.623 |  33.848 | 2.00 ± 0.01 |
+| parse_large_chunks_as_i64         | 26.451 ± 0.478 |  26.122 |  27.162 | 1.57 ± 0.03 |
+| parse_large_chunks_as_i64_v2      | 19.797 ± 0.031 |  19.764 |  19.830 | 1.18 ± 0.00 |
+| parse_large_chunks_as_i64_unsafe  | 27.408 ± 0.390 |  27.058 |  27.780 | 1.63 ± 0.02 |
+| parse_large_chunks_as_i64_as_java | 16.848 ± 0.050 |  16.784 |  16.900 |        1.00 |
+| parse_large_chunks_simd           | 31.520 ± 0.082 |  31.437 |  31.632 | 1.87 ± 0.01 |
+| parse_large_chunks_simd_v1        | 30.221 ± 0.339 |  29.961 |  30.689 | 1.79 ± 0.02 |
+
 # Fastest Java solution [CalculateAverage_thomaswue.java](https://github.com/gunnarmorling/1brc/blob/main/src/main/java/dev/morling/onebrc/CalculateAverage_thomaswue.java)
 
 | Type of run  | Number of threads |        Mean [s] | Min [s] | Max [s] |
