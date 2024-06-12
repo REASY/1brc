@@ -235,7 +235,7 @@ pub fn naive_line_by_line<R: Read + Seek>(
 
 /// Converts a slice of bytes to a string slice without checking that the string contains valid UTF-8.
 #[inline]
-pub fn byte_to_string_unsafe(bytes: &[u8]) -> &str {
+pub const fn byte_to_string_unsafe(bytes: &[u8]) -> &str {
     unsafe { std::str::from_utf8_unchecked(bytes) }
 }
 
@@ -250,7 +250,8 @@ const fn get_digit(b: u8) -> u32 {
 /// "0.0"   -> 0
 /// "-99.9" -> -999
 /// "99.9"  -> 999
-pub const fn get_as_scaled_integer(bytes: &[u8]) -> i16 {
+#[inline]
+pub const fn to_scaled_integer(bytes: &[u8]) -> i16 {
     let is_negative = bytes[0] == b'-';
     let as_decimal = match (is_negative, bytes.len()) {
         (true, 4) => get_digit(bytes[1]) * 10 + get_digit(bytes[3]),
@@ -281,7 +282,7 @@ pub fn naive_line_by_line_v2<R: Read + Seek>(
         rdr,
         |name: &[u8], t: &[u8]| {
             let station_name: &str = byte_to_string_unsafe(name);
-            let value = get_as_scaled_integer(t);
+            let value = to_scaled_integer(t);
             match hs.get_mut(station_name) {
                 None => {
                     let mut s = StateI::new(value);
@@ -304,6 +305,7 @@ pub fn naive_line_by_line_v2<R: Read + Seek>(
     all
 }
 
+/// Search in provided buf for the first newline backward and seek rdr to it
 #[inline]
 fn seek_backward_to_newline<'a, R: Read + Seek>(
     rdr: &mut BufReader<R>,
@@ -332,16 +334,14 @@ const INIT_HASH_VALUE: u64 = 0x517cc1b727220a95;
 
 #[inline]
 const fn get_semicolon_pos(w: i64) -> u32 {
-    // Check http://www.graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
-    let x = w ^ 0x3b3b3b3b3b3b3b3b;
-    let t = (x - 0x0101010101010101) & (!x & (0x8080808080808080u64 as i64));
-    i64::trailing_zeros(t) >> 3
+    i64::trailing_zeros(get_semicolon_mask(w)) >> 3
 }
 
 #[inline]
 const fn get_semicolon_mask(w: i64) -> i64 {
-    // Check http://www.graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
+    // XOR with 0x3b3b3b3b3b3b3b3b to set it to zero in all places where it occurs
     let x = w ^ 0x3b3b3b3b3b3b3b3b;
+    // And use old school quick check whether a word has zero, check http://www.graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
     let mask = (x - 0x0101010101010101) & (!x & (0x8080808080808080u64 as i64));
     mask
 }
@@ -352,6 +352,8 @@ const fn get_decimal_separator_pos(value: i64) -> u32 {
 }
 
 /// Special method to convert a number in the ascii number into an int without branches created by Quan Anh Mai.
+///
+/// https://github.com/gunnarmorling/1brc/blob/db064194be375edc02d6dbcd21268ad40f7e2869/src/main/java/dev/morling/onebrc/CalculateAverage_thomaswue.java#L308
 #[inline]
 pub const fn to_scaled_integer_branchless(value: i64) -> (i16, i16) {
     let decimal_sep_pos = get_decimal_separator_pos(value) as i32;
@@ -370,7 +372,9 @@ pub const fn to_scaled_integer_branchless(value: i64) -> (i16, i16) {
     (as_int, len)
 }
 
-const fn get_whole_word(qw: u64, semicolon_pos: usize) -> u64 {
+/// Clear the bytes of u64 after pos
+#[inline]
+const fn clear_bytes_after(v: u64, pos: usize) -> u64 {
     const MASK: [u64; 9] = [
         0x00,
         0xFF,
@@ -382,8 +386,8 @@ const fn get_whole_word(qw: u64, semicolon_pos: usize) -> u64 {
         0xFFFFFFFFFFFFFF,
         0xFFFFFFFFFFFFFFFF,
     ];
-    let mask_value = MASK[semicolon_pos];
-    qw & mask_value
+    let mask_value = MASK[pos];
+    v & mask_value
 }
 
 #[inline]
@@ -413,7 +417,7 @@ fn process_buffer_as_bytes<F>(
             }
             let name = &valid_buffer[next_name_idx..i];
             let value = &valid_buffer[start_measurement_idx..j];
-            let v = get_as_scaled_integer(value);
+            let v = to_scaled_integer(value);
             let hash = if should_calculate_hash {
                 calculate_hash(&name)
             } else {
@@ -454,8 +458,7 @@ where
         let sp0 = get_semicolon_pos(qw0);
         if sp0 != 8 {
             if should_calculate_hash {
-                let word = get_whole_word(qw0 as u64, sp0 as usize);
-                hash = hash ^ word;
+                hash = hash ^ clear_bytes_after(qw0 as u64, sp0 as usize);
             }
 
             let end_exclusive = i + sp0 as usize;
@@ -540,7 +543,7 @@ where
             let letter_count1 = i64::trailing_zeros(m0) >> 3; // value between 1 and 8
             let letter_count2 = i64::trailing_zeros(m1) >> 3; // value between 0 and 8
 
-            hash = hash ^ get_whole_word(qw0 as u64, letter_count1 as usize);
+            hash = hash ^ clear_bytes_after(qw0 as u64, letter_count1 as usize);
 
             let len_mask = get_mask(letter_count1 as usize);
 
@@ -630,7 +633,7 @@ pub const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 128 * 1024 * 1024;
 
 /// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
 ///
-/// This is around 3 times faster than [`naive_line_by_line`] at raw parsing speed.
+/// This is around 2.7 times faster than [`naive_line_by_line`].
 #[inline]
 fn parse_large_chunks_as_bytes0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
@@ -1076,7 +1079,7 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
     parse_large_chunks_simd0(
         rdr,
         |name: &[u8], t: &[u8]| {
-            let value = get_as_scaled_integer(t);
+            let value = to_scaled_integer(t);
             match hs.get_mut(name) {
                 None => {
                     let mut s = StateI::new(value);
@@ -1144,7 +1147,7 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
     parse_large_chunks_simd0(
         rdr,
         |name: &[u8], t: &[u8]| {
-            let value = get_as_scaled_integer(t);
+            let value = to_scaled_integer(t);
             match hs.get_mut(name) {
                 None => {
                     let s = StateI::new(value);
@@ -1359,6 +1362,62 @@ mod tests {
     }
 
     #[test]
+    fn test_to_scaled_integer() {
+        fn verify(i: i16) {
+            let f = i as f64 / 10 as f64;
+            let s = format!("{:.1}", f);
+            assert_eq!(i, to_scaled_integer(s.as_bytes()));
+        }
+        for i in 0..1000 {
+            verify(-i);
+            verify(i);
+        }
+    }
+
+    #[test]
+    fn test_get_semicolon_pos() {
+        assert_eq!(7, get_semicolon_pos(0x3b6f62616c614d31));
+        assert_eq!(6, get_semicolon_pos(0x313b6f62616c614d));
+        assert_eq!(5, get_semicolon_pos(0x4d313b6f62616c61));
+        assert_eq!(4, get_semicolon_pos(0x614d313b6f62616c));
+        assert_eq!(3, get_semicolon_pos(0x6c614d313b6f6261));
+        assert_eq!(2, get_semicolon_pos(0x616c614d313b6f62));
+        assert_eq!(1, get_semicolon_pos(0x62616c614d313b6f));
+        assert_eq!(0, get_semicolon_pos(0x6f62616c614d313b));
+
+        // When it is not found, it returns 8
+        assert_eq!(8, get_semicolon_pos(0x126f62616c614d31));
+        // Case when we have to semicolons, it finds the one that is in smaller part of the number
+        assert_eq!(0, get_semicolon_pos(0x413b312e380a413b));
+    }
+
+    #[test]
+    fn test_get_decimal_separator_pos() {
+        // -99.9
+        assert_eq!(28, get_decimal_separator_pos(0x68430A392E39392D));
+        // -9.9
+        assert_eq!(20, get_decimal_separator_pos(0x6968430A392E392D));
+
+        // 99.9
+        assert_eq!(20, get_decimal_separator_pos(0x6868430A392E3939));
+        // 9.9
+        assert_eq!(12, get_decimal_separator_pos(0x686868430A392E39));
+    }
+
+    #[test]
+    fn test_clear_bytes_after() {
+        assert_eq!(0, clear_bytes_after(0x517CAFD6554A6FC1, 0));
+        assert_eq!(0xC1, clear_bytes_after(0x517CAFD6554A6FC1, 1));
+        assert_eq!(0x6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 2));
+        assert_eq!(0x4A6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 3));
+        assert_eq!(0x554A6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 4));
+        assert_eq!(0xD6554A6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 5));
+        assert_eq!(0xAFD6554A6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 6));
+        assert_eq!(0x7CAFD6554A6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 7));
+        assert_eq!(0x517CAFD6554A6FC1, clear_bytes_after(0x517CAFD6554A6FC1, 8));
+    }
+
+    #[test]
     fn test_naive_line_by_line0() {
         let content = create_content(&STATIONS, &TEMPERATURES);
         let rdr = BufReader::with_capacity(64 * 1024, Cursor::new(content.as_bytes()));
@@ -1383,7 +1442,7 @@ mod tests {
         parse_large_chunks_as_bytes0(
             rdr,
             |x, y, _hash| {
-                let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
+                let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
                 println!("Expected: {s}");
@@ -1405,7 +1464,7 @@ mod tests {
         parse_large_chunks_as_i64_0(
             rdr,
             |x, y, _hash| {
-                let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
+                let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
                 println!("Expected: {s}");
@@ -1428,7 +1487,7 @@ mod tests {
         parse_large_chunks_as_i64_unsafe_0(
             rdr,
             |x, y, _hash| {
-                let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
+                let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
                 println!("Expected: {s}");
@@ -1450,7 +1509,7 @@ mod tests {
         parse_large_chunks_as_i64_as_java0(
             rdr,
             |x, y, _hash| {
-                let expected_v = get_as_scaled_integer(TEMPERATURES[idx].as_bytes());
+                let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
                 println!("Expected: {s}");
@@ -1503,22 +1562,5 @@ mod tests {
             (content.len() - 1) as u64,
             106,
         );
-    }
-
-    #[test]
-    fn test_get_semicolon_pos() {
-        assert_eq!(7, get_semicolon_pos(0x3b6f62616c614d31));
-        assert_eq!(6, get_semicolon_pos(0x313b6f62616c614d));
-        assert_eq!(5, get_semicolon_pos(0x4d313b6f62616c61));
-        assert_eq!(4, get_semicolon_pos(0x614d313b6f62616c));
-        assert_eq!(3, get_semicolon_pos(0x6c614d313b6f6261));
-        assert_eq!(2, get_semicolon_pos(0x616c614d313b6f62));
-        assert_eq!(1, get_semicolon_pos(0x62616c614d313b6f));
-        assert_eq!(0, get_semicolon_pos(0x6f62616c614d313b));
-
-        // When it is not found, it returns 8
-        assert_eq!(8, get_semicolon_pos(0x126f62616c614d31));
-        // Case when we have to semicolons, it finds the one that is in smaller part of the number
-        assert_eq!(0, get_semicolon_pos(0x413b312e380a413b));
     }
 }
