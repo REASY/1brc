@@ -58,15 +58,13 @@ The results obtained by running [scripts/run_benchmark.sh](scripts/run_benchmark
 | JVM          | 48                |   2.133 ± 0.236 |   1.857 |   2.586 |
 | Native Image | 48                | 0.4121 ± 0.0051 |  0.4019 |  0.4163 |
 
-Java 1RBC
-
-## Native Image
+## JVM
 
 ```bash
 hyperfine --warmup 4 --runs 10 --export-markdown java_thomaswue.md "java --enable-preview --class-path /root/code/github/gunnarmorling/1brc/target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_thomaswue"
 ```
 
-## JVM
+## Native Image
 
 ```bash
 hyperfine --warmup 4 --runs 10 --export-markdown java_native_thomaswue.md /root/code/github/gunnarmorling/1brc/target/CalculateAverage_thomaswue_image
