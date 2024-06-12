@@ -1,6 +1,12 @@
 // #[global_allocator]
 // static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
+use std::fs::File;
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::str::FromStr;
+use std::thread;
+use std::time::Instant;
+
 use brc_core::{
     naive_line_by_line, naive_line_by_line_dummy, naive_line_by_line_v2,
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_as_i64,
@@ -9,11 +15,6 @@ use brc_core::{
     parse_large_chunks_simd_dummy, parse_large_chunks_simd_v1, sort_result, StateF,
     DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
 };
-use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-use std::str::FromStr;
-use std::thread;
-use std::time::Instant;
 
 /// The capacity of BufReader to improve reading
 const BUF_READER_CAPACITY: usize = 64 * 1024 * 1024;
@@ -98,10 +99,10 @@ fn main() {
             match hs.get_mut(k.as_str()) {
                 None => {
                     hs.insert(k, s);
-                }
+                },
                 Some(prev) => {
                     prev.merge(&s);
-                }
+                },
             }
         }
     }
@@ -160,7 +161,8 @@ fn get_chunks(cores: usize, file: File) -> Vec<(usize, usize)> {
         let read_bytes = rdr.read(&mut buf).unwrap();
         assert_ne!(0, read_bytes, "start: {start}, end: {end}");
 
-        // We move forward to find the closes new line to simplify reading per chunk - a chunk is always complete, it will have full line
+        // We move forward to find the closes new line to simplify reading per chunk - a
+        // chunk is always complete, it will have full line
         let valid_buf = &buf[0..read_bytes];
         let mut i: usize = 0;
         while i < valid_buf.len() && valid_buf[i] != 0xA {
@@ -175,6 +177,10 @@ fn get_chunks(cores: usize, file: File) -> Vec<(usize, usize)> {
         chunks.push((start, fixed_end));
         start = fixed_end + 1;
     }
-    eprintln!("For {cores} cores prepared {} chunks, chunk_size: {chunk_size}, file_length: {file_length}", chunks.len());
+    eprintln!(
+        "For {cores} cores prepared {} chunks, chunk_size: {chunk_size}, file_length: \
+         {file_length}",
+        chunks.len()
+    );
     chunks
 }

@@ -31,7 +31,7 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
                         iter_idx <= len,
                         "find_slot called without a matching key and full storage!"
                     );
-                }
+                },
             }
         };
         &mut self.inner[slot_idx]
@@ -55,10 +55,10 @@ impl<const MAX_SIZE: usize> Table<MAX_SIZE> {
         let mut result: Vec<(String, StateF)> = Vec::with_capacity(MAX_SIZE);
         for item in &self.inner {
             match item {
-                None => {}
+                None => {},
                 Some((k, v)) => {
                     result.push((k.clone(), v.to_f64()));
-                }
+                },
             }
         }
         result
@@ -96,7 +96,7 @@ impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
                         iter_idx <= len,
                         "find_slot called without a matching key and full storage!"
                     );
-                }
+                },
             }
         };
         slot_idx
@@ -119,10 +119,10 @@ impl<const MAX_SIZE: usize> KeyValueTable<MAX_SIZE> {
         let mut result: Vec<(String, StateF)> = Vec::with_capacity(MAX_SIZE);
         for i in 0..self.keys.len() {
             match &self.keys[i] {
-                None => {}
+                None => {},
                 Some(k) => {
                     result.push((k.clone(), self.values[i].to_f64()));
-                }
+                },
             }
         }
         result

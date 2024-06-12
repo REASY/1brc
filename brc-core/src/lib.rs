@@ -1,11 +1,13 @@
 mod station_name;
 mod table;
 
-use crate::table::Table;
-use rustc_hash::FxHashMap;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::str::FromStr;
+
+use rustc_hash::FxHashMap;
+
+use crate::table::Table;
 
 #[derive(Debug)]
 pub struct StateF {
@@ -84,6 +86,7 @@ impl StateI {
             sum: v as i64,
         }
     }
+
     fn update(&mut self, v: i16) {
         self.min = self.min.min(v);
         self.max = self.max.max(v);
@@ -108,25 +111,21 @@ impl StateI {
     }
 }
 
-pub fn sort_result(all: &mut Vec<(String, StateF)>) {
-    all.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-}
+pub fn sort_result(all: &mut Vec<(String, StateF)>) { all.sort_unstable_by(|a, b| a.0.cmp(&b.0)); }
 
 /// Converts a slice of bytes to a string slice.
 #[inline]
-pub fn byte_to_string(bytes: &[u8]) -> &str {
-    std::str::from_utf8(bytes).unwrap()
-}
+pub fn byte_to_string(bytes: &[u8]) -> &str { std::str::from_utf8(bytes).unwrap() }
 
 /// Converts a string in base 10 to a float.
 #[inline]
-pub fn parse_f64(s: &str) -> f64 {
-    f64::from_str(s).unwrap()
-}
+pub fn parse_f64(s: &str) -> f64 { f64::from_str(s).unwrap() }
 
-/// Reads from provided buffered reader line by line, finds station name and temperature and calls processor with found byte slices.
+/// Reads from provided buffered reader line by line, finds station name and
+/// temperature and calls processor with found byte slices.
 ///
-/// This is a naive implementation used by [naive_line_by_line_dummy] and [naive_line_by_line]
+/// This is a naive implementation used by [naive_line_by_line_dummy] and
+/// [naive_line_by_line]
 fn naive_line_by_line0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
     mut processor: F,
@@ -139,8 +138,10 @@ fn naive_line_by_line0<R: Read + Seek, F>(
     rdr.seek(SeekFrom::Start(start)).unwrap();
 
     // Input value ranges are as follows:
-    // Station name: non null UTF-8 string of min length 1 character and max length 100 bytes (i.e. this could be 100 one-byte characters, or 50 two-byte characters, etc.)
-    // Temperature value: non null double between -99.9 (inclusive) and 99.9 (inclusive), always with one fractional digit
+    // Station name: non null UTF-8 string of min length 1 character and max length
+    // 100 bytes (i.e. this could be 100 one-byte characters, or 50 two-byte
+    // characters, etc.) Temperature value: non null double between -99.9
+    // (inclusive) and 99.9 (inclusive), always with one fractional digit
     const MAX_LINE_LENGTH_IN_BYTES: usize = 108; // We actually need 100 + 1 (';') + 5 ("-99.9") + 1 ('\n') = 107
 
     let mut s: String = String::with_capacity(MAX_LINE_LENGTH_IN_BYTES);
@@ -159,7 +160,8 @@ fn naive_line_by_line0<R: Read + Seek, F>(
         }
         let name = &slice[0..idx];
         // The remaining bytes are for temperature
-        // We need to subtract 1 from read_bytes because `read_line` includes delimiter as well
+        // We need to subtract 1 from read_bytes because `read_line` includes delimiter
+        // as well
         let value = &slice[idx + 1..read_bytes - 1];
         // Call processor to handle the temperature for the station
         processor(name, value);
@@ -168,9 +170,11 @@ fn naive_line_by_line0<R: Read + Seek, F>(
     }
 }
 
-/// Reads from provided buffered reader station name and temperature and simply accumulates some dummy value.
+/// Reads from provided buffered reader station name and temperature and simply
+/// accumulates some dummy value.
 ///
-/// This method helps us to understand what is the maximum possible throughput in case of running very simple operation on parsed data.
+/// This method helps us to understand what is the maximum possible throughput
+/// in case of running very simple operation on parsed data.
 pub fn naive_line_by_line_dummy<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -194,9 +198,11 @@ pub fn naive_line_by_line_dummy<R: Read + Seek>(
 
 const DEFAULT_HASHMAP_CAPACITY: usize = 10000;
 
-/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+/// Reads from provided buffered reader station name and temperature and
+/// aggregates temperature per station.
 ///
-/// The method uses [`byte_to_string`], [`parse_f64`] and [`std::collections::HashMap`] from standard library.
+/// The method uses [`byte_to_string`], [`parse_f64`] and
+/// [`std::collections::HashMap`] from standard library.
 pub fn naive_line_by_line<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -218,7 +224,7 @@ pub fn naive_line_by_line<R: Read + Seek>(
                     let mut s = StateF::default();
                     s.update(value);
                     hs.insert(station_name.to_string(), s);
-                }
+                },
                 Some(prev) => prev.update(value),
             }
         },
@@ -233,7 +239,8 @@ pub fn naive_line_by_line<R: Read + Seek>(
     all
 }
 
-/// Converts a slice of bytes to a string slice without checking that the string contains valid UTF-8.
+/// Converts a slice of bytes to a string slice without checking that the string
+/// contains valid UTF-8.
 #[inline]
 pub const fn byte_to_string_unsafe(bytes: &[u8]) -> &str {
     unsafe { std::str::from_utf8_unchecked(bytes) }
@@ -241,11 +248,10 @@ pub const fn byte_to_string_unsafe(bytes: &[u8]) -> &str {
 
 /// Converts byte to a digit
 #[inline]
-const fn get_digit(b: u8) -> u32 {
-    (b as u32).wrapping_sub('0' as u32)
-}
+const fn get_digit(b: u8) -> u32 { (b as u32).wrapping_sub('0' as u32) }
 
-/// Converts a float number in the range [-99.9, 99.9] with step 0.1 provided as bytes of str to a scaled i32 value [-999, 999]
+/// Converts a float number in the range [-99.9, 99.9] with step 0.1 provided as
+/// bytes of str to a scaled i32 value [-999, 999]
 ///
 /// "0.0"   -> 0
 /// "-99.9" -> -999
@@ -267,9 +273,13 @@ pub const fn to_scaled_integer(bytes: &[u8]) -> i16 {
     }
 }
 
-/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+/// Reads from provided buffered reader station name and temperature and
+/// aggregates temperature per station.
 ///
-/// The method relies on [`naive_line_by_line0`] but uses [`byte_to_string_unsafe`], aggregates data in [`StateI`] and uses [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than [`naive_line_by_line`]
+/// The method relies on [`naive_line_by_line0`] but uses
+/// [`byte_to_string_unsafe`], aggregates data in [`StateI`] and uses
+/// [`rustc_hash::FxHashMap`] that makes it ~1.5 times faster than
+/// [`naive_line_by_line`]
 pub fn naive_line_by_line_v2<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -288,7 +298,7 @@ pub fn naive_line_by_line_v2<R: Read + Seek>(
                     let mut s = StateI::new(value);
                     s.update(value);
                     hs.insert(station_name.to_string(), s);
-                }
+                },
                 Some(prev) => prev.update(value),
             }
         },
@@ -333,9 +343,7 @@ fn seek_backward_to_newline<'a, R: Read + Seek>(
 const INIT_HASH_VALUE: u64 = 0x517cc1b727220a95;
 
 #[inline]
-const fn get_semicolon_pos(w: i64) -> u32 {
-    i64::trailing_zeros(get_semicolon_mask(w)) >> 3
-}
+const fn get_semicolon_pos(w: i64) -> u32 { i64::trailing_zeros(get_semicolon_mask(w)) >> 3 }
 
 #[inline]
 const fn get_semicolon_mask(w: i64) -> i64 {
@@ -347,11 +355,10 @@ const fn get_semicolon_mask(w: i64) -> i64 {
 }
 
 #[inline]
-const fn get_decimal_separator_pos(value: i64) -> u32 {
-    i64::trailing_zeros(!value & 0x10101000)
-}
+const fn get_decimal_separator_pos(value: i64) -> u32 { i64::trailing_zeros(!value & 0x10101000) }
 
-/// Special method to convert a number in the ascii number into an int without branches created by Quan Anh Mai.
+/// Special method to convert a number in the ascii number into an int without
+/// branches created by Quan Anh Mai.
 ///
 /// https://github.com/gunnarmorling/1brc/blob/db064194be375edc02d6dbcd21268ad40f7e2869/src/main/java/dev/morling/onebrc/CalculateAverage_thomaswue.java#L308
 #[inline]
@@ -361,10 +368,11 @@ pub const fn to_scaled_integer_branchless(value: i64) -> (i16, i16) {
     // signed is -1 if negative, 0 otherwise
     let signed = (!value << 59) >> 63;
     let design_mask = !(signed & 0xFF);
-    // Align the number to a specific position and transform the ascii to digit value
+    // Align the number to a specific position and transform the ascii to digit
+    // value
     let digits = ((value & design_mask) << shift) & 0x0F000F0F00;
-    // Now digits is in the form 0xUU00TTHH00 (UU: units digit, TT: tens digit, HH: hundreds digit)
-    // 0xUU00TTHH00 * (100 * 0x1000000 + 10 * 0x10000 + 1) =
+    // Now digits is in the form 0xUU00TTHH00 (UU: units digit, TT: tens digit, HH:
+    // hundreds digit) 0xUU00TTHH00 * (100 * 0x1000000 + 10 * 0x10000 + 1) =
     // 0x000000UU00TTHH00 + 0x00UU00TTHH000000 * 10 + 0xUU00TTHH00000000 * 100
     let abs_value = ((digits.wrapping_mul(0x640a0001)) >> 32) & 0x3FF;
     let as_int = ((abs_value ^ signed) - signed) as i16;
@@ -548,7 +556,8 @@ where
             let len_mask = get_mask(letter_count1 as usize);
 
             let total_offset = letter_count1 as u64 + (letter_count2 as u64 & len_mask);
-            // println!("i: {i}, qw0: {qw0:#08X}, m0: {m0:#08X}, qw1: {qw1:#08X}, m1: {m1:#08X}, total_offset: {total_offset}");
+            // println!("i: {i}, qw0: {qw0:#08X}, m0: {m0:#08X}, qw1: {qw1:#08X}, m1:
+            // {m1:#08X}, total_offset: {total_offset}");
 
             let end_exclusive = i + total_offset as usize;
             let name = &valid_buffer[next_name_idx..end_exclusive];
@@ -631,7 +640,9 @@ where
 
 pub const DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER: usize = 128 * 1024 * 1024;
 
-/// Reads from provided buffered reader in large chunks, parses it line by line, finds station name and temperature and calls processor with found byte slices.
+/// Reads from provided buffered reader in large chunks, parses it line by line,
+/// finds station name and temperature and calls processor with found byte
+/// slices.
 ///
 /// This is around 2.7 times faster than [`naive_line_by_line`].
 #[inline]
@@ -789,9 +800,12 @@ pub fn parse_large_chunks_as_bytes_dummy<R: Read + Seek>(
     vec![("dummy".to_string(), s)]
 }
 
-/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+/// Reads from provided buffered reader station name and temperature and
+/// aggregates temperature per station.
 ///
-/// The method relies on [`parse_large_chunks_as_bytes0`] and uses [`byte_to_string_unsafe`] and [`rustc_hash::FxHashMap`] that makes it ~1.8 times faster than [`naive_line_by_line_v2`]
+/// The method relies on [`parse_large_chunks_as_bytes0`] and uses
+/// [`byte_to_string_unsafe`] and [`rustc_hash::FxHashMap`] that makes it ~1.8
+/// times faster than [`naive_line_by_line_v2`]
 pub fn parse_large_chunks_as_bytes<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -805,7 +819,7 @@ pub fn parse_large_chunks_as_bytes<R: Read + Seek>(
         |name: &[u8], t: i16, _| match hs.get_mut(name) {
             None => {
                 hs.insert(name.to_vec(), StateI::new(t));
-            }
+            },
             Some(prev) => prev.update(t),
         },
         start,
@@ -845,9 +859,12 @@ pub fn parse_large_chunks_as_i64_dummy<R: Read + Seek>(
     vec![("dummy".to_string(), s)]
 }
 
-/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+/// Reads from provided buffered reader station name and temperature and
+/// aggregates temperature per station.
 ///
-/// The method relies on [`parse_large_chunks_as_i64_0`] and uses [`byte_to_string_unsafe`] and [`rustc_hash::FxHashMap`] that makes it ~1.8 times faster than [`naive_line_by_line_v2`]
+/// The method relies on [`parse_large_chunks_as_i64_0`] and uses
+/// [`byte_to_string_unsafe`] and [`rustc_hash::FxHashMap`] that makes it ~1.8
+/// times faster than [`naive_line_by_line_v2`]
 pub fn parse_large_chunks_as_i64<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -861,7 +878,7 @@ pub fn parse_large_chunks_as_i64<R: Read + Seek>(
         |name: &[u8], t: i16, _| match hs.get_mut(name) {
             None => {
                 hs.insert(name.to_vec(), StateI::new(t));
-            }
+            },
             Some(prev) => prev.update(t),
         },
         start,
@@ -918,7 +935,7 @@ pub fn parse_large_chunks_as_i64_mm(
             match hs.get_mut(station_name) {
                 None => {
                     hs.insert(station_name.to_string(), StateI::new(t));
-                }
+                },
                 Some(prev) => prev.update(t),
             }
         },
@@ -948,7 +965,7 @@ pub fn parse_large_chunks_as_i64_unsafe<R: Read + Seek>(
         |name: &[u8], t: i16, _| match hs.get_mut(name) {
             None => {
                 hs.insert(name.to_vec(), StateI::new(t));
-            }
+            },
             Some(prev) => prev.update(t),
         },
         start,
@@ -965,9 +982,12 @@ pub fn parse_large_chunks_as_i64_unsafe<R: Read + Seek>(
     all
 }
 
-/// Reads from provided buffered reader in large chunks, parses it line by line using [`memchr::memchr`], finds station name and temperature and calls processor with found byte slices.
+/// Reads from provided buffered reader in large chunks, parses it line by line
+/// using [`memchr::memchr`], finds station name and temperature and calls
+/// processor with found byte slices.
 ///
-/// This is around 1.13 times faster than [`parse_large_chunks_as_bytes0`] at raw parsing speed.
+/// This is around 1.13 times faster than [`parse_large_chunks_as_bytes0`] at
+/// raw parsing speed.
 fn parse_large_chunks_simd0<R: Read + Seek, F>(
     mut rdr: BufReader<R>,
     mut processor: F,
@@ -1020,8 +1040,8 @@ fn parse_large_chunks_simd0<R: Read + Seek, F>(
 
             next_name_idx = it + 1 + idx + 1;
         }
-        // Tried `memchr::Memchr2` as well, however it is slower, leaving commented code below
-        // let mut next_name_idx = 0;
+        // Tried `memchr::Memchr2` as well, however it is slower, leaving commented code
+        // below let mut next_name_idx = 0;
         // let mut next_measurement_idx = 0;
         // let mut station_name_bytes: &[u8] = &[];
         //
@@ -1065,9 +1085,13 @@ pub fn parse_large_chunks_simd_dummy<R: Read + Seek>(
     vec![("dummy".to_string(), s)]
 }
 
-/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+/// Reads from provided buffered reader station name and temperature and
+/// aggregates temperature per station.
 ///
-/// The method relies on [`parse_large_chunks_simd0`] and uses [`byte_to_string_unsafe`], [`custom_parse_f64`] and [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks_as_bytes`]
+/// The method relies on [`parse_large_chunks_simd0`] and uses
+/// [`byte_to_string_unsafe`], [`custom_parse_f64`] and
+/// [`rustc_hash::FxHashMap`], could be slightly faster than
+/// [`parse_large_chunks_as_bytes`]
 pub fn parse_large_chunks_simd<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -1085,7 +1109,7 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
                     let mut s = StateI::new(value);
                     s.update(value);
                     hs.insert(name.to_vec(), s);
-                }
+                },
                 Some(prev) => prev.update(value),
             }
         },
@@ -1103,7 +1127,8 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
     all
 }
 
-/// Holder allows you store slices of bytes inside that can later be used directly as a key in HashMap
+/// Holder allows you store slices of bytes inside that can later be used
+/// directly as a key in HashMap
 ///
 /// Credits to @R3M4TCH for helping to fix this holder struct
 /// https://discord.com/channels/442252698964721669/448238009733742612/1245967276578963498
@@ -1129,9 +1154,12 @@ impl<'a> Holder<'a> {
     }
 }
 
-/// Reads from provided buffered reader station name and temperature and aggregates temperature per station.
+/// Reads from provided buffered reader station name and temperature and
+/// aggregates temperature per station.
 ///
-/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI`], [`rustc_hash::FxHashMap`], could be slightly faster than [`parse_large_chunks_simd`] or [`parse_large_chunks_as_bytes`]
+/// The method relies on [`parse_large_chunks_simd0`] and uses [`StateI`],
+/// [`rustc_hash::FxHashMap`], could be slightly faster than
+/// [`parse_large_chunks_simd`] or [`parse_large_chunks_as_bytes`]
 pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -1153,7 +1181,7 @@ pub fn parse_large_chunks_simd_v1<R: Read + Seek>(
                     let s = StateI::new(value);
                     let name = holder.store(name);
                     hs.insert(name, s);
-                }
+                },
                 Some(prev) => prev.update(value),
             }
         },
@@ -1225,8 +1253,9 @@ pub fn parse_large_chunks_as_i64_as_java<R: Read + Seek>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Cursor;
+
+    use super::*;
 
     fn create_content(stations: &[&str], temperatures: &[&str]) -> String {
         let mut content: String = stations
@@ -1387,7 +1416,8 @@ mod tests {
 
         // When it is not found, it returns 8
         assert_eq!(8, get_semicolon_pos(0x126f62616c614d31));
-        // Case when we have to semicolons, it finds the one that is in smaller part of the number
+        // Case when we have to semicolons, it finds the one that is in smaller part of
+        // the number
         assert_eq!(0, get_semicolon_pos(0x413b312e380a413b));
     }
 

@@ -1,9 +1,10 @@
+use std::time::Duration;
+
 use brc_core::{
     byte_to_string, byte_to_string_unsafe, parse_f64, to_scaled_integer,
     to_scaled_integer_branchless,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use std::time::Duration;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let str_as_bytes = "Thiès Lake Havasu City Yaoundé Petropavlovsk-Kamchatsky".as_bytes();

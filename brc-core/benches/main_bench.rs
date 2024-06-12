@@ -1,11 +1,12 @@
+use std::io::{BufReader, Cursor};
+use std::time::Duration;
+
 use brc_core::{
     naive_line_by_line, naive_line_by_line_dummy, naive_line_by_line_v2,
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_simd,
     parse_large_chunks_simd_dummy, parse_large_chunks_v1,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::io::{BufReader, Cursor};
-use std::time::Duration;
 
 fn get_buf_reader(bytes: &[u8]) -> BufReader<Cursor<&[u8]>> {
     BufReader::with_capacity(64 * 1024 * 1024, Cursor::new(bytes))
