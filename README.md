@@ -9,7 +9,7 @@
 - Java 21.0.3 2024-04-16 LTS, Java HotSpot(TM) 64-Bit Server VM Oracle GraalVM 21.0.3+7.1 (build
   21.0.3+7-LTS-jvmci-23.1-b37, mixed mode, sharing)
 
-# Results of the original Rust solution [tumdum/1brc](https://github.com/tumdum/1brc)
+# Reference Rust solution [tumdum/1brc](https://github.com/tumdum/1brc)
 
 The results obtained by running [scripts/run_benchmark_original.sh](scripts/run_benchmark_original.sh). It slightly
 modifies the original code to allow passing number of cores and also makes sure the project is built with native CPU
