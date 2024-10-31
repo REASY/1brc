@@ -1,4 +1,4 @@
-use crate::{byte_to_string_unsafe, StateF, StateI};
+use crate::{StateF, StateI, byte_to_string_unsafe};
 
 /// Open addressing table
 pub struct Table<const MAX_SIZE: usize> {

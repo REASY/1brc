@@ -1,8 +1,12 @@
+#![feature(portable_simd)]
+
 mod station_name;
 mod table;
 
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::simd::cmp::SimdPartialEq;
+use std::simd::u8x64;
 use std::str::FromStr;
 
 use rustc_hash::FxHashMap;
@@ -78,7 +82,7 @@ impl Display for StateI {
 }
 
 impl StateI {
-    fn new(v: i16) -> StateI {
+    pub fn new(v: i16) -> StateI {
         StateI {
             min: v,
             max: v,
@@ -87,7 +91,7 @@ impl StateI {
         }
     }
 
-    fn update(&mut self, v: i16) {
+    pub fn update(&mut self, v: i16) {
         self.min = self.min.min(v);
         self.max = self.max.max(v);
         self.count += 1;
@@ -1101,6 +1105,133 @@ pub fn parse_large_chunks_simd<R: Read + Seek>(
     let mut hs: FxHashMap<Vec<u8>, StateI> =
         FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
     parse_large_chunks_simd0(
+        rdr,
+        |name: &[u8], t: &[u8]| {
+            let value = to_scaled_integer(t);
+            match hs.get_mut(name) {
+                None => {
+                    let mut s = StateI::new(value);
+                    s.update(value);
+                    hs.insert(name.to_vec(), s);
+                },
+                Some(prev) => prev.update(value),
+            }
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
+    let mut all: Vec<(String, StateF)> = hs
+        .into_iter()
+        .map(|(k, v)| (byte_to_string_unsafe(k.as_slice()).to_string(), v.to_f64()))
+        .collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+fn parse_large_chunks_simd1<R: Read + Seek, F>(
+    mut rdr: BufReader<R>,
+    mut processor: F,
+    start: u64,
+    end_inclusive: u64,
+    buffer_size: usize,
+) where
+    F: FnMut(&[u8], &[u8]),
+{
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset: usize = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut vec: Vec<u8> = vec![0; buffer_size];
+    let mut buf = vec.as_mut_slice();
+
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr.read(&mut buf).expect("Unable to read line");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        if remaining < buf.len() {
+            read_bytes = remaining;
+        }
+        let valid_buffer = {
+            // Scan backward to find the first new line (0xA)
+            let buf_to_scan_backward = &buf[0..read_bytes];
+            let idx = memchr::memrchr(b'\n', &buf_to_scan_backward).unwrap();
+            let i: usize = buf_to_scan_backward.len() - 1 - idx;
+            let j: usize = read_bytes - 1 - i;
+            assert!(j < read_bytes, "j: {j}, read_bytes: {read_bytes}");
+
+            if i > 0 {
+                let pos = i as i64;
+                rdr.seek(SeekFrom::Current(-pos))
+                    .expect("Failed to seek back from current position");
+            }
+            &buf_to_scan_backward[0..=j]
+        };
+
+        let semicolon_mask = u8x64::splat(b';');
+        let newline_mask = u8x64::splat(b'\n');
+
+        let mut next_name_idx: usize = 0;
+        let mut start_measurement_idx: usize = 0;
+        let buffer = valid_buffer;
+        let mut idx = 0;
+        const REGISTER_SIZE: usize = 64;
+        while idx < buffer.len() {
+            // Check the length of the remaining buffer and take a chunk of 64 bytes
+            let end_idx = (idx + REGISTER_SIZE).min(buffer.len());
+            let chunk = &buffer[idx..end_idx];
+            let mut padded_buffer = [0u8; REGISTER_SIZE];
+            padded_buffer[..chunk.len()].copy_from_slice(chunk);
+
+            let chunk_vec = u8x64::from_slice(&padded_buffer);
+            let semi_mask = chunk_vec.simd_eq(semicolon_mask);
+            let new_mask = chunk_vec.simd_eq(newline_mask);
+            let mut i: usize = 0;
+            while i < REGISTER_SIZE {
+                if semi_mask.test(i) {
+                    let global_idx = i + idx;
+                    let name = &buffer[next_name_idx..global_idx];
+                    start_measurement_idx = global_idx + 1;
+                    i += 3;
+                    while i < REGISTER_SIZE {
+                        if new_mask.test(i) {
+                            let global_idx = i + idx;
+                            next_name_idx = global_idx + 1;
+                            let temp_str = &buffer[start_measurement_idx..global_idx];
+                            processor(name, temp_str);
+                            break;
+                        }
+                        i += 1;
+                    }
+                } else if new_mask.test(i) {
+                    let global_idx = i + idx;
+                    let temp_str = &buffer[start_measurement_idx..global_idx];
+                    let name = &buffer[next_name_idx..start_measurement_idx - 1];
+                    processor(name, temp_str);
+                    next_name_idx = global_idx + 1;
+                }
+                i += 1;
+            }
+            idx += REGISTER_SIZE;
+        }
+
+        offset += valid_buffer.len();
+    }
+}
+
+pub fn parse_large_chunks_simd_v2<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF)> {
+    let mut hs: FxHashMap<Vec<u8>, StateI> =
+        FxHashMap::with_capacity_and_hasher(DEFAULT_HASHMAP_CAPACITY, Default::default());
+    parse_large_chunks_simd1(
         rdr,
         |name: &[u8], t: &[u8]| {
             let value = to_scaled_integer(t);
