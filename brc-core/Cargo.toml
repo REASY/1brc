@@ -6,17 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hashbrown = "0.15.0"
-memchr = "2.7.4"
-rustc-hash = "2.0.0"
+hashbrown = "0.15.4"
+memchr = "2.7.5"
+rustc-hash = "2.1.1"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.6"
 
 
-[[bench]]
-name = "main_bench"
-harness = false
+#[[bench]]
+#name = "main_bench"
+#harness = false
 
 [[bench]]
 name = "utils_bench"

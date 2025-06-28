@@ -6,7 +6,7 @@ use brc_core::{
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_as_i64,
     parse_large_chunks_simd, parse_large_chunks_simd_dummy, parse_large_chunks_simd_v2,
 };
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn get_buf_reader(bytes: &[u8]) -> BufReader<Cursor<&[u8]>> {
     BufReader::with_capacity(64 * 1024 * 1024, Cursor::new(bytes))
@@ -125,7 +125,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
 criterion_group! {
   name = benches;
-  config = Criterion::default().measurement_time(Duration::from_secs(20)).warm_up_time(Duration::from_secs(5));
-  targets = criterion_benchmark
+  config =
+Criterion::default().measurement_time(Duration::from_secs(20)).
+warm_up_time(Duration::from_secs(5));   targets = criterion_benchmark
 }
 criterion_main!(benches);

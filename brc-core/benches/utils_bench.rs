@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use brc_core::{
     byte_to_string, byte_to_string_unsafe, parse_f64, to_scaled_integer,
-    to_scaled_integer_branchless,
+    to_scaled_integer_branchless, to_scaled_integer_v2,
 };
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let str_as_bytes = "Thiès Lake Havasu City Yaoundé Petropavlovsk-Kamchatsky".as_bytes();
@@ -19,8 +19,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     g.bench_function("parse_f64", |b| b.iter(|| parse_f64(black_box("9.9"))));
 
-    g.bench_function("get_as_scaled_integer", |b| {
+    g.bench_function("to_scaled_integer", |b| {
         b.iter(|| to_scaled_integer(black_box("-99.9".as_bytes())))
+    });
+
+    g.bench_function("to_scaled_integer_v2", |b| {
+        b.iter(|| to_scaled_integer_v2(black_box("-99.9".as_bytes())))
     });
 
     g.bench_function("to_scaled_integer_branchless", |b| {

@@ -13,7 +13,7 @@
 
 # Reference Rust solution [tumdum/1brc](https://github.com/tumdum/1brc)
 
-The results obtained by running [scripts/run_benchmark_original.sh](scripts/run_benchmark_original.sh). It slightly
+The results are obtained by running [scripts/run_benchmark_original.sh](scripts/run_benchmark_original.sh). It slightly
 modifies the original code to allow passing number of cores and also makes sure the project is built with native CPU
 support to get max performance.
 
@@ -30,7 +30,7 @@ support to get max performance.
 
 # My results
 
-The results obtained by running [scripts/run_benchmark.sh](scripts/run_benchmark.sh).
+The results are obtained by running [scripts/run_benchmark.sh](scripts/run_benchmark.sh).
 
 | Implementation                    | Number of threads |       Mean [s] | Min [s] | Max [s] |
 |:----------------------------------|-------------------|---------------:|--------:|--------:|
@@ -60,7 +60,7 @@ The results obtained by running [scripts/run_benchmark.sh](scripts/run_benchmark
 | parse_large_chunks_as_i64_dummy   | 16.163 ± 0.156 |  16.021 |  16.328 |
 | parse_large_chunks_simd_dummy     | 10.931 ± 0.044 |  10.896 |  10.995 |
 
-## All implementations in single thread
+## All implementations in a single thread
 
 | Command                           |       Mean [s] | Min [s] | Max [s] |    Relative |
 |:----------------------------------|---------------:|--------:|--------:|------------:|

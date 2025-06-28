@@ -277,6 +277,29 @@ pub const fn to_scaled_integer(bytes: &[u8]) -> i16 {
     }
 }
 
+#[inline]
+pub const fn to_scaled_integer_v2(bytes: &[u8]) -> i16 {
+    let mut sign: i16 = 1;
+    let mut idx: usize = 0;
+    let mut b = bytes[idx];
+    idx += 1;
+    if b == b'-' {
+        sign = -1;
+        b = bytes[idx];
+        idx += 1;
+    }
+    let mut result: u32 = get_digit(b);
+    b = bytes[idx];
+    idx += 1;
+    if b != b'.' {
+        result = 10 * result + get_digit(b);
+        idx += 1;
+    }
+    b = bytes[idx];
+    result = 10 * result + get_digit(b);
+    sign * (result as i16)
+}
+
 /// Reads from provided buffered reader station name and temperature and
 /// aggregates temperature per station.
 ///
@@ -429,7 +452,7 @@ fn process_buffer_as_bytes<F>(
             }
             let name = &valid_buffer[next_name_idx..i];
             let value = &valid_buffer[start_measurement_idx..j];
-            let v = to_scaled_integer(value);
+            let v = to_scaled_integer_v2(value);
             let hash = if should_calculate_hash {
                 calculate_hash(&name)
             } else {
@@ -1223,6 +1246,27 @@ fn parse_large_chunks_simd1<R: Read + Seek, F>(
     }
 }
 
+pub fn parse_large_chunks_simd_v2_dummy<R: Read + Seek>(
+    rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    _should_sort: bool,
+) -> Vec<(String, StateF)> {
+    let mut dummy_result: usize = 0;
+    parse_large_chunks_simd1(
+        rdr,
+        |name: &[u8], t: &[u8]| {
+            dummy_result += name.len() + t.len();
+        },
+        start,
+        end_inclusive,
+        DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER,
+    );
+    let mut s = StateF::default();
+    s.count = dummy_result as u32;
+    vec![("dummy".to_string(), s)]
+}
+
 pub fn parse_large_chunks_simd_v2<R: Read + Seek>(
     rdr: BufReader<R>,
     start: u64,
@@ -1535,6 +1579,20 @@ mod tests {
     }
 
     #[test]
+    fn test_to_scaled_integer_v2() {
+        fn verify(i: i16) {
+            let f = i as f64 / 10 as f64;
+            let s = format!("{:.1}", f);
+            println!("{s}: {}", to_scaled_integer_v2(s.as_bytes()));
+            assert_eq!(i, to_scaled_integer_v2(s.as_bytes()));
+        }
+        for i in 0..1000 {
+            verify(-i);
+            verify(i);
+        }
+    }
+
+    #[test]
     fn test_get_semicolon_pos() {
         assert_eq!(7, get_semicolon_pos(0x3b6f62616c614d31));
         assert_eq!(6, get_semicolon_pos(0x313b6f62616c614d));
@@ -1606,7 +1664,6 @@ mod tests {
                 let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
-                println!("Expected: {s}");
                 assert_eq!(s.as_bytes(), x, "idx: {idx}, s: {s}, str_x: {str_x}");
                 assert_eq!(expected_v, y, "idx: {idx}");
                 idx += 1;
@@ -1628,7 +1685,6 @@ mod tests {
                 let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
-                println!("Expected: {s}");
                 assert_eq!(s.as_bytes(), x, "idx: {idx}, s: {s}, str_x: {str_x}");
                 assert_eq!(expected_v, y, "idx: {idx}");
                 idx += 1;
@@ -1651,7 +1707,6 @@ mod tests {
                 let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
-                println!("Expected: {s}");
                 assert_eq!(s.as_bytes(), x, "idx: {idx}, s: {s}, str_x: {str_x}");
                 assert_eq!(expected_v, y, "idx: {idx}");
                 idx += 1;
@@ -1673,7 +1728,6 @@ mod tests {
                 let expected_v = to_scaled_integer(TEMPERATURES[idx].as_bytes());
                 let s = STATIONS[idx];
                 let str_x = byte_to_string(x);
-                println!("Expected: {s}");
                 assert_eq!(s.as_bytes(), x, "idx: {idx}, s: {s}, str_x: {str_x}");
                 assert_eq!(expected_v, y, "idx: {idx}");
                 idx += 1;
