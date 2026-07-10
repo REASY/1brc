@@ -1,5 +1,6 @@
 #![feature(portable_simd)]
 
+mod fingerprint_table;
 mod station_name;
 mod table;
 
@@ -11,6 +12,7 @@ use std::str::FromStr;
 
 use rustc_hash::FxHashMap;
 
+use crate::fingerprint_table::FingerprintTable;
 use crate::table::Table;
 
 #[derive(Debug)]
@@ -532,6 +534,75 @@ where
     );
 }
 
+/// Finds record separators with memchr's vectorized scanner, but keeps the
+/// packed, branchless temperature decoder used by the fastest scalar parser.
+#[inline]
+fn process_buffer_memchr_i64<F>(processor: &mut F, buffer: &[u8], valid_len: usize)
+where
+    F: FnMut(&[u8], &[u8], i16),
+{
+    let valid_buffer = &buffer[..valid_len];
+    let mut next_name_idx = 0;
+    for semicolon_idx in memchr::memchr_iter(b';', valid_buffer) {
+        let measurement_idx = semicolon_idx + 1;
+        let name = &valid_buffer[next_name_idx..semicolon_idx];
+        let padded_name = &buffer[next_name_idx..];
+        let packed = i64::from_le_bytes(
+            buffer[measurement_idx..measurement_idx + 8]
+                .try_into()
+                .unwrap(),
+        );
+        let (value, record_tail_len) = to_scaled_integer_branchless(packed);
+
+        processor(name, padded_name, value);
+        next_name_idx = measurement_idx + record_tail_len as usize;
+    }
+}
+
+/// Finds semicolons 64 bytes at a time and enumerates only matching lanes from
+/// the comparison bitmask.
+#[inline]
+fn process_buffer_std_simd_i64<F>(processor: &mut F, buffer: &[u8], valid_len: usize)
+where
+    F: FnMut(&[u8], &[u8], i16),
+{
+    const LANES: usize = 64;
+    let semicolons = u8x64::splat(b';');
+    let mut next_name_idx = 0;
+
+    let mut process_semicolon = |semicolon_idx: usize| {
+        let measurement_idx = semicolon_idx + 1;
+        let name = &buffer[next_name_idx..semicolon_idx];
+        let padded_name = &buffer[next_name_idx..];
+        let packed = i64::from_le_bytes(
+            buffer[measurement_idx..measurement_idx + 8]
+                .try_into()
+                .unwrap(),
+        );
+        let (value, record_tail_len) = to_scaled_integer_branchless(packed);
+
+        processor(name, padded_name, value);
+        next_name_idx = measurement_idx + record_tail_len as usize;
+    };
+
+    let simd_len = valid_len / LANES * LANES;
+    let mut chunk_idx = 0;
+    while chunk_idx < simd_len {
+        let chunk = u8x64::from_slice(&buffer[chunk_idx..chunk_idx + LANES]);
+        let mut matches = chunk.simd_eq(semicolons).to_bitmask();
+        while matches != 0 {
+            let lane = matches.trailing_zeros() as usize;
+            process_semicolon(chunk_idx + lane);
+            matches &= matches - 1;
+        }
+        chunk_idx += LANES;
+    }
+
+    for lane in memchr::memchr_iter(b';', &buffer[simd_len..valid_len]) {
+        process_semicolon(simd_len + lane);
+    }
+}
+
 #[inline]
 fn process_buffer_as_i64_as_java0<F>(processor: &mut F, valid_buffer: &[u8])
 where
@@ -917,6 +988,104 @@ pub fn parse_large_chunks_as_i64<R: Read + Seek>(
         .into_iter()
         .map(|(k, v)| (byte_to_string_unsafe(k.as_slice()).to_string(), v.to_f64()))
         .collect();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+/// Vectorized semicolon discovery plus branchless packed temperature parsing,
+/// backed by a compact station fingerprint table.
+pub fn parse_large_chunks_memchr_table<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF)> {
+    const TABLE_SIZE: usize = 16384;
+    let mut table = FingerprintTable::<TABLE_SIZE>::new();
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    // Padding permits safe fixed-width loads for the final name and measurement.
+    let mut storage = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER + 8];
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr
+            .read(&mut storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER])
+            .expect("Unable to read chunk");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        read_bytes = read_bytes.min(remaining);
+        let valid_len = seek_backward_to_newline(
+            &mut rdr,
+            &storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER],
+            read_bytes,
+        )
+        .len();
+
+        process_buffer_memchr_i64(
+            &mut |name, padded_name, value| {
+                table.insert_or_update(name, padded_name, value)
+            },
+            &storage,
+            valid_len,
+        );
+        offset += valid_len;
+    }
+
+    let mut all = table.into_result();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+/// Portable-SIMD semicolon discovery plus branchless packed temperature
+/// parsing, backed by the compact station fingerprint table.
+pub fn parse_large_chunks_std_simd_table<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF)> {
+    const TABLE_SIZE: usize = 16384;
+    const SIMD_PADDING: usize = 64;
+    let mut table = FingerprintTable::<TABLE_SIZE>::new();
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut storage = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER + SIMD_PADDING];
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr
+            .read(&mut storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER])
+            .expect("Unable to read chunk");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        read_bytes = read_bytes.min(remaining);
+        let valid_len = seek_backward_to_newline(
+            &mut rdr,
+            &storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER],
+            read_bytes,
+        )
+        .len();
+
+        process_buffer_std_simd_i64(
+            &mut |name, padded_name, value| {
+                table.insert_or_update(name, padded_name, value)
+            },
+            &storage,
+            valid_len,
+        );
+        offset += valid_len;
+    }
+
+    let mut all = table.into_result();
     if should_sort {
         sort_result(&mut all);
     }
