@@ -7,12 +7,13 @@ mod table;
 use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::simd::cmp::SimdPartialEq;
-use std::simd::u8x64;
+use std::simd::num::SimdInt;
+use std::simd::{Select, i64x8, u8x32, u8x64};
 use std::str::FromStr;
 
 use rustc_hash::FxHashMap;
 
-use crate::fingerprint_table::FingerprintTable;
+use crate::fingerprint_table::{FingerprintTable, SimdFingerprintTable};
 use crate::table::Table;
 
 #[derive(Debug)]
@@ -536,7 +537,7 @@ where
 
 /// Finds record separators with memchr's vectorized scanner, but keeps the
 /// packed, branchless temperature decoder used by the fastest scalar parser.
-#[inline]
+#[inline(always)]
 fn process_buffer_memchr_i64<F>(processor: &mut F, buffer: &[u8], valid_len: usize)
 where
     F: FnMut(&[u8], &[u8], i16),
@@ -559,18 +560,28 @@ where
     }
 }
 
-/// Finds semicolons 64 bytes at a time and enumerates only matching lanes from
-/// the comparison bitmask.
-#[inline]
+/// Starts a SIMD delimiter search at each station name. Most names find their
+/// semicolon in the first vector; longer names continue in 32-byte steps.
+#[inline(always)]
 fn process_buffer_std_simd_i64<F>(processor: &mut F, buffer: &[u8], valid_len: usize)
 where
     F: FnMut(&[u8], &[u8], i16),
 {
-    const LANES: usize = 64;
-    let semicolons = u8x64::splat(b';');
+    const LANES: usize = 32;
+    let semicolons = u8x32::splat(b';');
     let mut next_name_idx = 0;
 
-    let mut process_semicolon = |semicolon_idx: usize| {
+    while next_name_idx < valid_len {
+        let mut search_idx = next_name_idx;
+        let semicolon_idx = loop {
+            let chunk = u8x32::from_slice(&buffer[search_idx..search_idx + LANES]);
+            let matches = chunk.simd_eq(semicolons).to_bitmask();
+            if matches != 0 {
+                break search_idx + matches.trailing_zeros() as usize;
+            }
+            search_idx += LANES;
+        };
+
         let measurement_idx = semicolon_idx + 1;
         let name = &buffer[next_name_idx..semicolon_idx];
         let padded_name = &buffer[next_name_idx..];
@@ -583,23 +594,109 @@ where
 
         processor(name, padded_name, value);
         next_name_idx = measurement_idx + record_tail_len as usize;
-    };
+    }
+}
 
-    let simd_len = valid_len / LANES * LANES;
-    let mut chunk_idx = 0;
-    while chunk_idx < simd_len {
-        let chunk = u8x64::from_slice(&buffer[chunk_idx..chunk_idx + LANES]);
-        let mut matches = chunk.simd_eq(semicolons).to_bitmask();
-        while matches != 0 {
-            let lane = matches.trailing_zeros() as usize;
-            process_semicolon(chunk_idx + lane);
-            matches &= matches - 1;
+#[inline(always)]
+fn parse_temperatures_x8(packed: [i64; 8]) -> [i16; 8] {
+    let values = i64x8::from_array(packed);
+    let byte_mask = i64x8::splat(0xff);
+    let dot = i64x8::splat(b'.' as i64);
+    let negative = (values & byte_mask).simd_eq(i64x8::splat(b'-' as i64));
+    let signed = negative.select(i64x8::splat(-1), i64x8::splat(0));
+    let design_mask = !(signed & byte_mask);
+    let unsigned_values = values & design_mask;
+    let dot_at_1 = ((values >> 8) & byte_mask).simd_eq(dot);
+    let dot_at_2 = ((values >> 16) & byte_mask).simd_eq(dot);
+    let aligned = dot_at_1.select(
+        unsigned_values << 16,
+        dot_at_2.select(unsigned_values << 8, unsigned_values),
+    );
+    let digits = aligned & i64x8::splat(0x0f000f0f00);
+    let absolute = ((digits * i64x8::splat(0x640a0001)) >> 32) & i64x8::splat(0x3ff);
+    ((absolute ^ signed) - signed).cast::<i16>().to_array()
+}
+
+#[inline(always)]
+fn process_buffer_memchr_simd_temperature<const TABLE_SIZE: usize>(
+    table: &mut FingerprintTable<TABLE_SIZE>,
+    buffer: &[u8],
+    valid_len: usize,
+) {
+    const LANES: usize = 8;
+    let valid_buffer = &buffer[..valid_len];
+    let mut slots = [0_usize; LANES];
+    let mut packed = [0_i64; LANES];
+    let mut batch_len = 0;
+    let mut next_name_idx = 0;
+
+    for semicolon_idx in memchr::memchr_iter(b';', valid_buffer) {
+        let measurement_idx = semicolon_idx + 1;
+        let value = i64::from_le_bytes(
+            buffer[measurement_idx..measurement_idx + 8]
+                .try_into()
+                .unwrap(),
+        );
+        let record_tail_len = ((get_decimal_separator_pos(value) >> 3) + 3) as usize;
+
+        let name = &buffer[next_name_idx..semicolon_idx];
+        slots[batch_len] = table.find_or_insert(name, &buffer[next_name_idx..]);
+        packed[batch_len] = value;
+        batch_len += 1;
+        next_name_idx = measurement_idx + record_tail_len;
+
+        if batch_len == LANES {
+            let temperatures = parse_temperatures_x8(packed);
+            for lane in 0..LANES {
+                table.update_slot(slots[lane], temperatures[lane]);
+            }
+            batch_len = 0;
         }
-        chunk_idx += LANES;
     }
 
-    for lane in memchr::memchr_iter(b';', &buffer[simd_len..valid_len]) {
-        process_semicolon(simd_len + lane);
+    if batch_len != 0 {
+        let temperatures = parse_temperatures_x8(packed);
+        for lane in 0..batch_len {
+            table.update_slot(slots[lane], temperatures[lane]);
+        }
+    }
+}
+
+#[inline(always)]
+fn process_buffer_memchr_full_simd<const TABLE_SIZE: usize>(
+    table: &mut SimdFingerprintTable<TABLE_SIZE>,
+    buffer: &[u8],
+    valid_len: usize,
+) {
+    const LANES: usize = 8;
+    let valid_buffer = &buffer[..valid_len];
+    let mut name_ids = [0_usize; LANES];
+    let mut packed = [0_i64; LANES];
+    let mut batch_len = 0;
+    let mut next_name_idx = 0;
+
+    for semicolon_idx in memchr::memchr_iter(b';', valid_buffer) {
+        let measurement_idx = semicolon_idx + 1;
+        let value = i64::from_le_bytes(
+            buffer[measurement_idx..measurement_idx + 8]
+                .try_into()
+                .unwrap(),
+        );
+        let record_tail_len = ((get_decimal_separator_pos(value) >> 3) + 3) as usize;
+        let name = &buffer[next_name_idx..semicolon_idx];
+        name_ids[batch_len] = table.find_or_insert(name, &buffer[next_name_idx..]);
+        packed[batch_len] = value;
+        batch_len += 1;
+        next_name_idx = measurement_idx + record_tail_len;
+
+        if batch_len == LANES {
+            table.update_batch(name_ids, parse_temperatures_x8(packed));
+            batch_len = 0;
+        }
+    }
+
+    if batch_len != 0 {
+        table.update_partial(name_ids, parse_temperatures_x8(packed), batch_len);
     }
 }
 
@@ -1027,9 +1124,7 @@ pub fn parse_large_chunks_memchr_table<R: Read + Seek>(
         .len();
 
         process_buffer_memchr_i64(
-            &mut |name, padded_name, value| {
-                table.insert_or_update(name, padded_name, value)
-            },
+            &mut |name, padded_name, value| table.insert_or_update(name, padded_name, value),
             &storage,
             valid_len,
         );
@@ -1076,12 +1171,95 @@ pub fn parse_large_chunks_std_simd_table<R: Read + Seek>(
         .len();
 
         process_buffer_std_simd_i64(
-            &mut |name, padded_name, value| {
-                table.insert_or_update(name, padded_name, value)
-            },
+            &mut |name, padded_name, value| table.insert_or_update(name, padded_name, value),
             &storage,
             valid_len,
         );
+        offset += valid_len;
+    }
+
+    let mut all = table.into_result();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+/// Vectorized delimiter discovery with eight temperatures parsed in parallel,
+/// backed by the compact station fingerprint table.
+pub fn parse_large_chunks_simd_temperature_table<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF)> {
+    const TABLE_SIZE: usize = 16384;
+    const PADDING: usize = 8;
+    let mut table = FingerprintTable::<TABLE_SIZE>::new();
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut storage = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER + PADDING];
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr
+            .read(&mut storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER])
+            .expect("Unable to read chunk");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        read_bytes = read_bytes.min(remaining);
+        let valid_len = seek_backward_to_newline(
+            &mut rdr,
+            &storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER],
+            read_bytes,
+        )
+        .len();
+
+        process_buffer_memchr_simd_temperature(&mut table, &storage, valid_len);
+        offset += valid_len;
+    }
+
+    let mut all = table.into_result();
+    if should_sort {
+        sort_result(&mut all);
+    }
+    all
+}
+
+/// Eight-wide SIMD temperature parsing and lane-striped SIMD aggregation.
+pub fn parse_large_chunks_full_simd_table<R: Read + Seek>(
+    mut rdr: BufReader<R>,
+    start: u64,
+    end_inclusive: u64,
+    should_sort: bool,
+) -> Vec<(String, StateF)> {
+    const TABLE_SIZE: usize = 16384;
+    const PADDING: usize = 8;
+    let mut table = SimdFingerprintTable::<TABLE_SIZE>::new();
+    let end_incl_usize = end_inclusive as usize;
+    let mut offset = start as usize;
+    rdr.seek(SeekFrom::Start(start)).unwrap();
+
+    let mut storage = vec![0; DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER + PADDING];
+    while offset <= end_incl_usize {
+        let mut read_bytes = rdr
+            .read(&mut storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER])
+            .expect("Unable to read chunk");
+        if read_bytes == 0 {
+            break;
+        }
+        let remaining = end_incl_usize - offset + 1;
+        read_bytes = read_bytes.min(remaining);
+        let valid_len = seek_backward_to_newline(
+            &mut rdr,
+            &storage[..DEFAULT_BUFFER_SIZE_FOR_LARGE_CHUNK_PARSER],
+            read_bytes,
+        )
+        .len();
+
+        process_buffer_memchr_full_simd(&mut table, &storage, valid_len);
         offset += valid_len;
     }
 

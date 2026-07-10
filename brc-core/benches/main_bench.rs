@@ -6,7 +6,7 @@ use brc_core::{
     parse_large_chunks_as_bytes, parse_large_chunks_as_bytes_dummy, parse_large_chunks_as_i64,
     parse_large_chunks_simd, parse_large_chunks_simd_dummy, parse_large_chunks_simd_v2,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 fn get_buf_reader(bytes: &[u8]) -> BufReader<Cursor<&[u8]>> {
     BufReader::with_capacity(64 * 1024 * 1024, Cursor::new(bytes))
